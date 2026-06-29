@@ -45,6 +45,12 @@
       "expo-status-bar",
       "expo-secure-store",
       [
+        "@react-native-kakao/core",
+        {
+          "nativeAppKey": "83493d18b522a2aa69a658dc228f55ca"
+        }
+      ],
+      [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "백그라운드에서 주행 경로를 자동으로 기록하기 위해 위치 정보가 필요합니다."
@@ -55,7 +61,8 @@
         {
           "photosPermission": "지역 사진을 업로드하기 위해 사진 라이브러리 접근이 필요합니다."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }
