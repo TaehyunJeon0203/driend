@@ -10,6 +10,7 @@ import Mapbox, {
 } from '@rnmapbox/maps';
 import { supabase } from '../../src/services/supabase';
 import { startTracking, stopTracking, Coordinate } from '../../src/services/locationTracker';
+import { colors } from '../../src/theme';
 
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN!);
 
@@ -136,7 +137,7 @@ export default function MapScreen() {
             <LineLayer
               id="route-layer"
               style={{
-                lineColor: '#1A73E8',
+                lineColor: colors.primary,
                 lineWidth: 4,
                 lineJoin: 'round',
                 lineCap: 'round',
@@ -192,7 +193,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 48,
     alignSelf: 'center',
-    backgroundColor: '#1A73E8',
+    backgroundColor: colors.primary,
     paddingHorizontal: 40,
     paddingVertical: 14,
     borderRadius: 30,
@@ -202,13 +203,13 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 5,
   },
-  trackBtnActive: { backgroundColor: '#EA4335' },
+  trackBtnActive: { backgroundColor: colors.danger },
   trackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   recordingBadge: {
     position: 'absolute',
     top: 56,
     alignSelf: 'center',
-    backgroundColor: 'rgba(234,67,53,0.9)',
+    backgroundColor: 'rgba(240,68,82,0.9)',
     paddingHorizontal: 16,
     paddingVertical: 6,
     borderRadius: 20,

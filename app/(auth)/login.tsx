@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
+import { colors } from '../../src/theme';
 
 export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
@@ -59,7 +60,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   top: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  logo: { fontSize: 52, fontWeight: 'bold', color: '#1A73E8' },
+  logo: { fontSize: 52, fontWeight: 'bold', color: colors.primary },
   subtitle: { fontSize: 17, color: '#888', textAlign: 'center', lineHeight: 26 },
   bottom: { padding: 32, paddingBottom: 48, gap: 12 },
   kakaoButtonDisabled: {
@@ -75,7 +76,7 @@ const styles = StyleSheet.create({
   kakaoText: { color: '#3C1E1E', fontSize: 16, fontWeight: '600' },
   soonText: { color: '#3C1E1E', fontSize: 12, opacity: 0.7 },
   guestButton: {
-    backgroundColor: '#1A73E8',
+    backgroundColor: colors.primary,
     borderRadius: 14,
     height: 54,
     alignItems: 'center',

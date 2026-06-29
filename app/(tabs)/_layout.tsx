@@ -1,13 +1,14 @@
 import { Tabs } from 'expo-router';
+import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#1A73E8',
-        tabBarInactiveTintColor: '#999',
-        tabBarStyle: { borderTopWidth: 1, borderTopColor: '#eee' },
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textTertiary,
+        tabBarStyle: { borderTopWidth: 1, borderTopColor: colors.divider },
       }}
     >
       <Tabs.Screen name="index" options={{ title: '지도' }} />
