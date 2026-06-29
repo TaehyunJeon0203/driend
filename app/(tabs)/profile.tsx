@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator,
+  StyleSheet, Alert, ActivityIndicator, Linking,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
@@ -134,6 +134,31 @@ export default function ProfileScreen() {
         )}
       </View>
 
+      {/* 자동 주행 감지 설정 */}
+      <View style={s.card}>
+        <Text style={s.cardTitle}>자동 주행 감지</Text>
+        <Text style={s.guideDesc}>
+          차량 블루투스 연결 시 자동으로 주행이 시작되도록 iOS 단축어를 설정할 수 있어요.
+        </Text>
+        <View style={s.steps}>
+          {[
+            '단축어 앱 → 자동화 탭 → + 버튼',
+            '블루투스 → 차량 기기 선택 → 연결됨',
+            '동작 추가 → URL 열기 → driend://start-drive',
+            '실행 전 확인 끄기',
+            '(선택) 연결 해제 시 driend://stop-drive 도 동일하게 설정',
+          ].map((step, i) => (
+            <View key={i} style={s.step}>
+              <Text style={s.stepNum}>{i + 1}</Text>
+              <Text style={s.stepText}>{step}</Text>
+            </View>
+          ))}
+        </View>
+        <TouchableOpacity style={s.shortcutsBtn} onPress={() => Linking.openURL('shortcuts://')}>
+          <Text style={s.shortcutsBtnText}>단축어 앱 열기</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* 로그아웃 */}
       <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
         <Text style={s.logoutText}>로그아웃</Text>
@@ -178,6 +203,21 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   saveBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+
+  guideDesc: { ...typography.label, lineHeight: 20 },
+  steps: { gap: spacing.sm },
+  step: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  stepNum: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.primaryLight, textAlign: 'center',
+    fontSize: 12, fontWeight: '700', color: colors.primary, lineHeight: 22,
+  },
+  stepText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 20 },
+  shortcutsBtn: {
+    marginTop: spacing.xs, backgroundColor: colors.primary,
+    borderRadius: radius.sm, padding: spacing.sm + 2, alignItems: 'center',
+  },
+  shortcutsBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 
   logoutBtn: {
     marginTop: spacing.sm, padding: spacing.md,

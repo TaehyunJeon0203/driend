@@ -26,6 +26,10 @@ function calcTotalDistance(coords: Coordinate[]): number {
   return total;
 }
 
+export function isTracking(): boolean {
+  return driveId !== null;
+}
+
 export async function startTracking(onPoint?: (coord: Coordinate) => void): Promise<boolean> {
   // 권한 요청 (이미 허용된 경우 시스템이 자동으로 granted 반환)
   await Location.requestForegroundPermissionsAsync();
