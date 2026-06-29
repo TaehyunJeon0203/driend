@@ -1,63 +1,55 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
-import Mapbox, {
-  MapView,
-  Camera,
-  UserLocation,
-  ShapeSource,
-  LineLayer,
-  HeatmapLayer,
-} from '@rnmapbox/maps';
+import {
+  NaverMapView,
+  NaverMapPathOverlay,
+  type NaverMapViewRef,
+} from '@mj-studio/react-native-naver-map';
 import { supabase } from '../../src/services/supabase';
 import { startTracking, stopTracking, Coordinate } from '../../src/services/locationTracker';
 import { colors } from '../../src/theme';
 
-Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN!);
-
-const KOREA_CENTER: [number, number] = [127.5, 36.5];
-
-type GeoPoint = { type: 'Feature'; geometry: { type: 'Point'; coordinates: [number, number] } };
+type RouteLine = { drive_id: string; coordinates: [number, number][] };
+type LatLng = { latitude: number; longitude: number };
 
 export default function MapScreen() {
-  const cameraRef = useRef<Camera>(null);
+  const mapRef = useRef<NaverMapViewRef>(null);
+  const isFirstPoint = useRef(true);
   const [tracking, setTracking] = useState(false);
-  const [followUser, setFollowUser] = useState(false);
-  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
-  const [heatmapPoints, setHeatmapPoints] = useState<GeoPoint[]>([]);
+  const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+  const [pastLines, setPastLines] = useState<RouteLine[]>([]);
 
-  // 히트맵 데이터 로드 (내 전체 경로)
-  useEffect(() => {
-    loadHeatmap();
-  }, []);
+  useEffect(() => { loadPastRoutes(); }, []);
 
-  const loadHeatmap = async () => {
+  const loadPastRoutes = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
-    const { data } = await supabase.rpc('get_user_route_points', { p_user_id: user.id });
-    if (!data) return;
-
-    const features: GeoPoint[] = data.map((row: { lng: number; lat: number }) => ({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
-    }));
-    setHeatmapPoints(features);
+    const { data } = await supabase.rpc('get_user_route_lines', { p_user_id: user.id });
+    if (data) setPastLines(data);
   };
-
-  const handleLocate = () => setFollowUser(true);
 
   const toggleTracking = async () => {
     if (tracking) {
       await stopTracking();
       setTracking(false);
       setRouteCoords([]);
-      loadHeatmap(); // 히트맵 갱신
+      loadPastRoutes();
     } else {
+      isFirstPoint.current = true;
       let ok = false;
       try {
         ok = await startTracking((coord: Coordinate) => {
-          setRouteCoords((prev) => [...prev, [coord.longitude, coord.latitude]]);
-          setFollowUser(true);
+          const latLng = { latitude: coord.latitude, longitude: coord.longitude };
+          setRouteCoords((prev) => [...prev, latLng]);
+          if (isFirstPoint.current) {
+            isFirstPoint.current = false;
+            mapRef.current?.animateCameraTo({
+              latitude: coord.latitude,
+              longitude: coord.longitude,
+              zoom: 15,
+              duration: 600,
+            });
+          }
         });
       } catch (e: any) {
         Alert.alert('오류', e.message ?? String(e));
@@ -71,86 +63,39 @@ export default function MapScreen() {
     }
   };
 
-  const routeGeoJSON: GeoJSON.FeatureCollection = {
-    type: 'FeatureCollection',
-    features:
-      routeCoords.length >= 2
-        ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: routeCoords } }]
-        : [],
-  };
-
-  const heatmapGeoJSON: GeoJSON.FeatureCollection = {
-    type: 'FeatureCollection',
-    features: heatmapPoints,
-  };
-
   return (
     <View style={styles.container}>
-      <MapView
+      <NaverMapView
+        ref={mapRef}
         style={styles.map}
-        styleURL="mapbox://styles/mapbox/streets-v12"
-        logoEnabled={false}
-        attributionEnabled={false}
-        compassEnabled
-        onPress={() => setFollowUser(false)}
+        initialCamera={{ latitude: 36.5, longitude: 127.5, zoom: 6 }}
+        isShowLocationButton
+        isShowCompass
+        isExtentBoundedInKorea
       >
-        <Camera
-          ref={cameraRef}
-          zoomLevel={followUser ? 15 : 6}
-          centerCoordinate={KOREA_CENTER}
-          followUserLocation={followUser}
-          followUserMode="normal"
-          animationMode="flyTo"
-          animationDuration={600}
-        />
-
-        <UserLocation visible androidRenderMode="compass" />
-
-        {/* 히트맵 레이어 */}
-        {heatmapPoints.length > 0 && (
-          <ShapeSource id="heatmap-source" shape={heatmapGeoJSON}>
-            <HeatmapLayer
-              id="heatmap-layer"
-              sourceID="heatmap-source"
-              style={{
-                heatmapRadius: 20,
-                heatmapOpacity: 0.7,
-                heatmapIntensity: 1,
-                heatmapColor: [
-                  'interpolate',
-                  ['linear'],
-                  ['heatmap-density'],
-                  0, 'rgba(0,0,255,0)',
-                  0.2, '#4FC3F7',
-                  0.5, '#FFF176',
-                  0.8, '#FF7043',
-                  1, '#B71C1C',
-                ],
-              }}
+        {/* 과거 주행 경로 */}
+        {pastLines.map((line) =>
+          line.coordinates?.length >= 2 ? (
+            <NaverMapPathOverlay
+              key={line.drive_id}
+              coords={line.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))}
+              color={colors.primary}
+              outlineColor="transparent"
+              width={3}
             />
-          </ShapeSource>
+          ) : null
         )}
 
-        {/* 실시간 경로 라인 */}
+        {/* 현재 주행 경로 */}
         {routeCoords.length >= 2 && (
-          <ShapeSource id="route-source" shape={routeGeoJSON}>
-            <LineLayer
-              id="route-layer"
-              style={{
-                lineColor: colors.primary,
-                lineWidth: 4,
-                lineJoin: 'round',
-                lineCap: 'round',
-              }}
-            />
-          </ShapeSource>
+          <NaverMapPathOverlay
+            coords={routeCoords}
+            color="#00D084"
+            outlineColor="transparent"
+            width={5}
+          />
         )}
-      </MapView>
-
-      {/* 현재 위치 버튼 */}
-      <TouchableOpacity style={styles.locateBtn} onPress={handleLocate}>
-        <Text style={styles.locateIcon}>◎</Text>
-      </TouchableOpacity>
+      </NaverMapView>
 
       {/* 주행 기록 버튼 */}
       <TouchableOpacity
@@ -172,23 +117,6 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-  locateBtn: {
-    position: 'absolute',
-    right: 16,
-    bottom: 128,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  locateIcon: { fontSize: 22 },
   trackBtn: {
     position: 'absolute',
     bottom: 48,

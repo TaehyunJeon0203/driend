@@ -62,7 +62,13 @@
           "photosPermission": "지역 사진을 업로드하기 위해 사진 라이브러리 접근이 필요합니다."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@mj-studio/react-native-naver-map",
+        {
+          "client_id": "wuodc80i7z"
+        }
+      ]
     ]
   }
 }
