@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useCallback } from 'react';
 import * as Location from 'expo-location';
 import {
   NaverMapView,
@@ -27,23 +26,21 @@ export default function MapScreen() {
   const [pastLines, setPastLines] = useState<RouteLine[]>([]);
   const [currentPosition, setCurrentPosition] = useState<LatLng | null>(null);
 
-  const loadPastRoutes = async () => {
+  const loadPastRoutes = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data } = await supabase.rpc('get_user_route_lines', { p_user_id: user.id });
     if (data) setPastLines(data);
-  };
+  }, []);
 
-  useFocusEffect(useCallback(() => { loadPastRoutes(); }, []));
+  useFocusEffect(useCallback(() => { loadPastRoutes(); }, [loadPastRoutes]));
 
   useEffect(() => {
-    // 딥링크로 이미 주행 중이면 상태 동기화
     if (isTracking()) {
       setTracking(true);
       isFirstPoint.current = false;
     }
 
-    // 전역 포인트 리스너: 딥링크/버튼 어디서 시작해도 경로 수신
     const removePoint = addPointListener((coord) => {
       const latLng = { latitude: coord.latitude, longitude: coord.longitude };
       setRouteCoords((prev) => [...prev, latLng]);
@@ -59,25 +56,22 @@ export default function MapScreen() {
       }
     });
 
-    // 전역 중지 리스너: 딥링크로 중지해도 지도 갱신
     const removeStop = addStopListener(() => {
       setTracking(false);
       setRouteCoords([]);
       loadPastRoutes();
     });
 
-    // 포그라운드 위치 감시 — 현재 위치 파란 점 표시용
+    // 현재 위치 파란 점용 포그라운드 감시 — 15m/5s로 리렌더 최소화
     let locationSub: Location.LocationSubscription | null = null;
     Location.requestForegroundPermissionsAsync().then(({ status }) => {
       if (status !== 'granted') return;
       Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, distanceInterval: 5 },
-        (loc) => {
-          setCurrentPosition({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          });
-        }
+        { accuracy: Location.Accuracy.Balanced, distanceInterval: 15, timeInterval: 5000 },
+        (loc) => setCurrentPosition({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        })
       ).then((sub) => { locationSub = sub; });
     });
 
@@ -86,7 +80,7 @@ export default function MapScreen() {
       removeStop();
       locationSub?.remove();
     };
-  }, []);
+  }, [loadPastRoutes]);
 
   const toggleTracking = async () => {
     if (toggling) return;

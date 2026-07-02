@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
 
 const LOCATION_TASK = 'driend-location-task';
+const FLUSH_THRESHOLD = 10; // 포인트 10개 쌓이면 Supabase에 일괄 저장
 
 export type Coordinate = { longitude: number; latitude: number };
 
@@ -11,14 +12,33 @@ export const DRIVE_IDLE_CATEGORY = 'DRIVE_IDLE';
 const IDLE_SPEED_THRESHOLD = 1.5; // m/s ≈ 5 km/h
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5분
 
+// 주행 상태
 let driveId: string | null = null;
 const buffer: Coordinate[] = [];
-const allCoords: Coordinate[] = [];
+
+// 메모리 효율적 거리 계산 — allCoords 배열 대신 스트리밍
+let runningDistanceKm = 0;
+let prevCoord: Coordinate | null = null;
+let firstCoord: Coordinate | null = null;
+let midCoord: Coordinate | null = null;
+let coordCount = 0;
+
+// 정차 감지
 let lastMovingTimestamp: number | null = null;
 let idleNotificationSent = false;
 
 const pointListeners = new Set<(coord: Coordinate) => void>();
 const stopListeners = new Set<() => void>();
+
+export function addPointListener(cb: (coord: Coordinate) => void): () => void {
+  pointListeners.add(cb);
+  return () => pointListeners.delete(cb);
+}
+
+export function addStopListener(cb: () => void): () => void {
+  stopListeners.add(cb);
+  return () => stopListeners.delete(cb);
+}
 
 export function resetIdleTimer(): void {
   lastMovingTimestamp = Date.now();
@@ -39,8 +59,15 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
       longitude: loc.coords.longitude,
       latitude: loc.coords.latitude,
     };
+
+    // 스트리밍 거리 계산
+    coordCount++;
+    if (!firstCoord) firstCoord = coord;
+    if (prevCoord) runningDistanceKm += haversineKm(prevCoord, coord);
+    prevCoord = coord;
+    if (coordCount % 30 === 0) midCoord = coord; // 도시 감지용 중간 샘플
+
     buffer.push(coord);
-    allCoords.push(coord);
     pointListeners.forEach((cb) => cb(coord));
 
     // 속도 기반 정차 감지 (speed: m/s, -1은 미지원)
@@ -65,18 +92,10 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
       }
     }
   }
-  flushBuffer();
+
+  // 10포인트 배치 flush
+  if (buffer.length >= FLUSH_THRESHOLD) flushBuffer();
 });
-
-export function addPointListener(cb: (coord: Coordinate) => void): () => void {
-  pointListeners.add(cb);
-  return () => pointListeners.delete(cb);
-}
-
-export function addStopListener(cb: () => void): () => void {
-  stopListeners.add(cb);
-  return () => stopListeners.delete(cb);
-}
 
 const REGION_TO_KO: Record<string, string> = {
   'Seoul': '서울특별시',
@@ -109,20 +128,11 @@ function haversineKm(a: Coordinate, b: Coordinate): number {
   return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 }
 
-function calcTotalDistance(coords: Coordinate[]): number {
-  let total = 0;
-  for (let i = 1; i < coords.length; i++) total += haversineKm(coords[i - 1], coords[i]);
-  return total;
-}
-
 async function recordVisitedCities(userId: string, coords: Coordinate[]) {
-  const indices = [0, Math.floor(coords.length / 2), coords.length - 1];
-  const uniqueIndices = [...new Set(indices)];
   const seenCodes = new Set<string>();
-
-  for (const idx of uniqueIndices) {
+  for (const coord of coords) {
     try {
-      const [geo] = await Location.reverseGeocodeAsync(coords[idx]);
+      const [geo] = await Location.reverseGeocodeAsync(coord);
       const code = geo.region ?? geo.city ?? null;
       if (!code || seenCodes.has(code)) continue;
       seenCodes.add(code);
@@ -135,11 +145,21 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
   }
 }
 
+function resetDriveState() {
+  runningDistanceKm = 0;
+  prevCoord = null;
+  firstCoord = null;
+  midCoord = null;
+  coordCount = 0;
+  buffer.length = 0;
+  lastMovingTimestamp = null;
+  idleNotificationSent = false;
+}
+
 export function isTracking(): boolean {
   return driveId !== null;
 }
 
-// 앱 재시작 시 강제 종료로 인해 ended_at이 없는 드라이브 정리
 export async function cleanupOrphanedDrives(): Promise<void> {
   if (isTracking()) return;
   const { data: { user } } = await supabase.auth.getUser();
@@ -178,12 +198,8 @@ export async function startTracking(): Promise<boolean> {
   }
 
   driveId = drive.id;
-  allCoords.length = 0;
-  buffer.length = 0;
-  lastMovingTimestamp = null;
-  idleNotificationSent = false;
+  resetDriveState();
 
-  // 이미 실행 중인 태스크가 있으면 정리 (앱 크래시 후 재시작 대비)
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (alreadyRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
@@ -206,17 +222,13 @@ export async function stopTracking(): Promise<string | null> {
   const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (isRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
-  lastMovingTimestamp = null;
-  idleNotificationSent = false;
   Notifications.dismissAllNotificationsAsync();
-
   await flushBuffer();
 
   if (!driveId) return null;
 
-  const distanceKm = calcTotalDistance(allCoords);
-  const coordSnapshot = [...allCoords];
-  allCoords.length = 0;
+  const distanceKm = runningDistanceKm;
+  const sampleCoords = [firstCoord, midCoord, prevCoord].filter(Boolean) as Coordinate[];
 
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -225,12 +237,13 @@ export async function stopTracking(): Promise<string | null> {
     .update({ ended_at: new Date().toISOString(), distance_km: distanceKm })
     .eq('id', driveId);
 
-  if (user && coordSnapshot.length > 0) {
-    recordVisitedCities(user.id, coordSnapshot);
+  if (user && sampleCoords.length > 0) {
+    recordVisitedCities(user.id, sampleCoords);
   }
 
   const id = driveId;
   driveId = null;
+  resetDriveState();
 
   stopListeners.forEach((cb) => cb());
   return id;
