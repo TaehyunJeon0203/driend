@@ -1,17 +1,29 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
 
 const LOCATION_TASK = 'driend-location-task';
 
 export type Coordinate = { longitude: number; latitude: number };
 
+export const DRIVE_IDLE_CATEGORY = 'DRIVE_IDLE';
+const IDLE_SPEED_THRESHOLD = 1.5; // m/s ≈ 5 km/h
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5분
+
 let driveId: string | null = null;
 const buffer: Coordinate[] = [];
 const allCoords: Coordinate[] = [];
+let lastMovingTimestamp: number | null = null;
+let idleNotificationSent = false;
 
 const pointListeners = new Set<(coord: Coordinate) => void>();
 const stopListeners = new Set<() => void>();
+
+export function resetIdleTimer(): void {
+  lastMovingTimestamp = Date.now();
+  idleNotificationSent = false;
+}
 
 // 모듈 최상단에서 정의 — expo-task-manager 요구사항
 TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskManagerTaskBody<{ locations: Location.LocationObject[] }>) => {
@@ -21,6 +33,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
   }
   if (!data?.locations?.length) return;
 
+  const now = Date.now();
   for (const loc of data.locations) {
     const coord: Coordinate = {
       longitude: loc.coords.longitude,
@@ -29,6 +42,28 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     buffer.push(coord);
     allCoords.push(coord);
     pointListeners.forEach((cb) => cb(coord));
+
+    // 속도 기반 정차 감지 (speed: m/s, -1은 미지원)
+    const speed = loc.coords.speed ?? -1;
+    if (speed >= 0 && speed > IDLE_SPEED_THRESHOLD) {
+      lastMovingTimestamp = now;
+      if (idleNotificationSent) {
+        idleNotificationSent = false;
+        Notifications.dismissAllNotificationsAsync();
+      }
+    } else if (speed >= 0 && lastMovingTimestamp && !idleNotificationSent) {
+      if (now - lastMovingTimestamp >= IDLE_TIMEOUT_MS) {
+        idleNotificationSent = true;
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: '주행이 종료되었나요?',
+            body: '5분 이상 정차 중입니다. 주행을 종료할까요?',
+            categoryIdentifier: DRIVE_IDLE_CATEGORY,
+          },
+          trigger: null,
+        });
+      }
+    }
   }
   flushBuffer();
 });
@@ -145,6 +180,8 @@ export async function startTracking(): Promise<boolean> {
   driveId = drive.id;
   allCoords.length = 0;
   buffer.length = 0;
+  lastMovingTimestamp = null;
+  idleNotificationSent = false;
 
   // 이미 실행 중인 태스크가 있으면 정리 (앱 크래시 후 재시작 대비)
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
@@ -168,6 +205,10 @@ export async function startTracking(): Promise<boolean> {
 export async function stopTracking(): Promise<string | null> {
   const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (isRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+
+  lastMovingTimestamp = null;
+  idleNotificationSent = false;
+  Notifications.dismissAllNotificationsAsync();
 
   await flushBuffer();
 
