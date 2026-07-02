@@ -29,17 +29,8 @@
 			<array>
 				<string>driend</string>
 				<string>com.driend.app</string>
-				<string>kakao83493d18b522a2aa69a658dc228f55ca</string>
-				<string>kakaof915f1b2a14d19bc2d83ec2e511f36dc</string>
 			</array>
 		</dict>
-	</array>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>kakaokompassauth</string>
-		<string>storykompassauth</string>
-		<string>kakaolink</string>
-		<string>kakaotalk</string>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
@@ -47,6 +38,10 @@
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NMFClientId</key>
+	<string>wuodc80i7z</string>
+	<key>NMFNcpKeyId</key>
+	<string>wuodc80i7z</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

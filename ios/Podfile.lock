@@ -133,14 +133,32 @@ PODS:
     - KakaoSDKCommon/Common (= 2.22.0)
   - KakaoSDKUser (2.22.0):
     - KakaoSDKAuth (= 2.22.0)
-  - MapboxCommon (24.20.3):
-    - Turf (= 4.0.0)
-  - MapboxCoreMaps (11.20.3):
-    - MapboxCommon (= 24.20.3)
-  - MapboxMaps (11.20.3):
-    - MapboxCommon (= 24.20.3)
-    - MapboxCoreMaps (= 11.20.3)
-    - Turf (= 4.0.0)
+  - mj-studio-react-native-naver-map (2.9.0):
+    - hermes-engine
+    - NMapsMap (= 3.23.2)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
+  - NMapsGeometry (1.0.2)
+  - NMapsMap (3.23.2):
+    - NMapsGeometry
   - RCTDeprecation (0.85.3)
   - RCTRequired (0.85.3)
   - RCTSwiftUI (0.85.3)
@@ -2063,33 +2081,6 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - rnmapbox-maps (10.3.1):
-    - MapboxMaps (~> 11.20.1)
-    - React
-    - React-Core
-    - rnmapbox-maps/DynamicLibrary (= 10.3.1)
-    - Turf
-  - rnmapbox-maps/DynamicLibrary (10.3.1):
-    - hermes-engine
-    - MapboxMaps (~> 11.20.1)
-    - RCTRequired
-    - RCTTypeSafety
-    - React
-    - React-Core
-    - React-Core-prebuilt
-    - React-featureflags
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - Turf
-    - Yoga
   - RNScreens (4.25.2):
     - hermes-engine
     - RCTRequired
@@ -2137,7 +2128,6 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - Turf (4.0.0)
   - UMAppLoader (56.0.1)
   - Yoga (0.0.0)
 
@@ -2167,6 +2157,7 @@ DEPENDENCIES:
   - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
+  - "mj-studio-react-native-naver-map (from `../node_modules/@mj-studio/react-native-naver-map`)"
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
   - RCTSwiftUI (from `../node_modules/react-native/ReactApple/RCTSwiftUI`)
@@ -2243,7 +2234,6 @@ DEPENDENCIES:
   - "RNCKakaoCore (from `../node_modules/@react-native-kakao/core`)"
   - "RNCKakaoUser (from `../node_modules/@react-native-kakao/user`)"
   - "RNCMaskedView (from `../node_modules/@react-native-masked-view/masked-view`)"
-  - "rnmapbox-maps (from `../node_modules/@rnmapbox/maps`)"
   - RNScreens (from `../node_modules/react-native-screens`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
@@ -2254,10 +2244,8 @@ SPEC REPOS:
     - KakaoSDKAuth
     - KakaoSDKCommon
     - KakaoSDKUser
-    - MapboxCommon
-    - MapboxCoreMaps
-    - MapboxMaps
-    - Turf
+    - NMapsGeometry
+    - NMapsMap
 
 EXTERNAL SOURCES:
   AsyncStorage:
@@ -2311,6 +2299,8 @@ EXTERNAL SOURCES:
   hermes-engine:
     :podspec: "../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
     :tag: hermes-v250829098.0.10
+  mj-studio-react-native-naver-map:
+    :path: "../node_modules/@mj-studio/react-native-naver-map"
   RCTDeprecation:
     :path: "../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
   RCTRequired:
@@ -2461,8 +2451,6 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-kakao/user"
   RNCMaskedView:
     :path: "../node_modules/@react-native-masked-view/masked-view"
-  rnmapbox-maps:
-    :path: "../node_modules/@rnmapbox/maps"
   RNScreens:
     :path: "../node_modules/react-native-screens"
   UMAppLoader:
@@ -2500,9 +2488,9 @@ SPEC CHECKSUMS:
   KakaoSDKAuth: 569b377eda622d93d4575240b8031cd658163eef
   KakaoSDKCommon: d57127c339fc79e73aa8b236a4c77211c29924f1
   KakaoSDKUser: 043bcd7e91454ebf3bf64f150c430e6f65f0a08d
-  MapboxCommon: bd1554a0c6e66ac04c9ecd3611f3b7d772eeac7e
-  MapboxCoreMaps: 821019cdd87447ecd895872f4095232723961627
-  MapboxMaps: 6191d857abe0da0f3bdfb5a71349c532d55d7d9d
+  mj-studio-react-native-naver-map: a9218c5c11e4513744a67596d6404855d5ce1c74
+  NMapsGeometry: 4e02554fa9880ef02ed96b075dc84355d6352479
+  NMapsMap: 617b1cec04331deb72fb7553f791bfe7d6b27bb2
   RCTDeprecation: a4c521821fab57cbb125b36effe84d897d0dfa12
   RCTRequired: 9f3a7e5645d4bc3f551593de7550bb66ab6e42bc
   RCTSwiftUI: 239ed2eb9e73de5a6f518810630f0c95e01c8702
@@ -2578,9 +2566,7 @@ SPEC CHECKSUMS:
   RNCKakaoCore: b944f36a27bad05af2cb473d968e7b13c2e47119
   RNCKakaoUser: 5209955219da87e90a1d2e0076c1a0b5f5dd1452
   RNCMaskedView: eb2b2e538afa907f05a5848a1a1ac26092e6fec9
-  rnmapbox-maps: 424ce5b089be0d753083b5ad70a3959eb8603891
   RNScreens: f94000b3cb1eb14cbb8d08dd6074fdd6ccf0e6b0
-  Turf: c9eb11a65d96af58cac523460fd40fec5061b081
   UMAppLoader: b7d22886a244871c20b5a8f2fcea13c18534e677
   Yoga: 77dfa8673de2874e1855002ae59c68b8be9b007b
 
