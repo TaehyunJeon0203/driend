@@ -1,16 +1,18 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, TouchableOpacity, Image, Alert,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number };
 type MonthlyData = { month: string; distance_km: number };
 type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null };
-type Vehicle = { id: string; name: string; photo_url: string | null };
+type Vehicle = { id: string; name: string };
+type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 
 const BAR_MAX_H = 72;
 
@@ -36,6 +38,8 @@ export default function StatsScreen() {
   const [monthly, setMonthly] = useState<MonthlyData[]>([]);
   const [drives, setDrives] = useState<Drive[]>([]);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [cities, setCities] = useState<VisitedCity[]>([]);
+  const [uploading, setUploading] = useState<string | null>(null); // city_code being uploaded
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -43,23 +47,84 @@ export default function StatsScreen() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const [statsRes, monthlyRes, drivesRes, vehicleRes] = await Promise.all([
+    const [statsRes, monthlyRes, drivesRes, vehicleRes, citiesRes] = await Promise.all([
       supabase.rpc('get_my_stats', { p_user_id: user.id }),
       supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
       supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
-      supabase.from('vehicles').select('*').eq('user_id', user.id).maybeSingle(),
+      supabase.from('vehicles').select('id, name').eq('user_id', user.id).maybeSingle(),
+      supabase.from('visited_cities')
+        .select('id, city_code, city_name, photo_url')
+        .eq('user_id', user.id)
+        .order('first_visited_at', { ascending: false }),
     ]);
 
     if (statsRes.data?.[0]) setStats(statsRes.data[0]);
     if (monthlyRes.data) setMonthly(monthlyRes.data);
     if (drivesRes.data) setDrives(drivesRes.data);
     if (vehicleRes.data) setVehicle(vehicleRes.data);
+    if (citiesRes.data) setCities(citiesRes.data);
     setLoading(false);
     setRefreshing(false);
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); load(); };
+
+  const pickCityPhoto = async (city: VisitedCity) => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('권한 필요', '사진 라이브러리 접근 권한이 필요해요.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (result.canceled) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    setUploading(city.city_code);
+    try {
+      const asset = result.assets[0];
+      const ext = asset.uri.split('.').pop() ?? 'jpg';
+      const path = `${user.id}/${city.city_code}.${ext}`;
+
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      const arrayBuffer = await new Response(blob).arrayBuffer();
+
+      const { error: uploadError } = await supabase.storage
+        .from('city-photos')
+        .upload(path, arrayBuffer, { contentType: `image/${ext}`, upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('city-photos')
+        .getPublicUrl(path);
+
+      const { error: updateError } = await supabase
+        .from('visited_cities')
+        .update({ photo_url: publicUrl })
+        .eq('id', city.id);
+
+      if (updateError) throw updateError;
+
+      setCities((prev) =>
+        prev.map((c) => c.id === city.id ? { ...c, photo_url: publicUrl } : c)
+      );
+    } catch (e: any) {
+      Alert.alert('업로드 실패', e.message ?? String(e));
+    } finally {
+      setUploading(null);
+    }
+  };
 
   if (loading) {
     return <View style={s.center}><ActivityIndicator size="large" color={colors.primary} /></View>;
@@ -73,7 +138,6 @@ export default function StatsScreen() {
       contentContainerStyle={s.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
-      {/* 헤더 */}
       <Text style={s.screenTitle}>통계</Text>
 
       {/* 누적 거리 히어로 */}
@@ -95,6 +159,38 @@ export default function StatsScreen() {
           <Text style={s.statNum}>{stats?.visited_cities_count ?? 0}</Text>
           <Text style={s.statLabel}>방문 도시</Text>
         </View>
+      </View>
+
+      {/* 방문 도시 스탬프 */}
+      <View style={s.card}>
+        <Text style={s.cardTitle}>방문 도시</Text>
+        {cities.length === 0 ? (
+          <Text style={s.empty}>주행을 마치면 방문한 도시가 기록돼요</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.cityList}>
+            {cities.map((city) => (
+              <TouchableOpacity
+                key={city.id}
+                style={s.cityCard}
+                onPress={() => pickCityPhoto(city)}
+                disabled={uploading === city.city_code}
+              >
+                {uploading === city.city_code ? (
+                  <View style={s.cityImgPlaceholder}>
+                    <ActivityIndicator color={colors.primary} />
+                  </View>
+                ) : city.photo_url ? (
+                  <Image source={{ uri: city.photo_url }} style={s.cityImg} />
+                ) : (
+                  <View style={s.cityImgPlaceholder}>
+                    <Text style={s.cityPlaceholderIcon}>+</Text>
+                  </View>
+                )}
+                <Text style={s.cityName} numberOfLines={1}>{city.city_name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
       {/* 월별 그래프 */}
@@ -153,27 +249,32 @@ const s = StyleSheet.create({
 
   screenTitle: { ...typography.title, marginBottom: spacing.sm },
 
-  heroCard: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
+  heroCard: { backgroundColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg },
   heroLabel: { fontSize: 13, color: 'rgba(255,255,255,0.75)', marginBottom: spacing.xs },
   heroRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   heroNum: { fontSize: 56, fontWeight: '800', color: '#fff', lineHeight: 64 },
   heroUnit: { fontSize: 18, color: 'rgba(255,255,255,0.75)', marginBottom: 6 },
 
   row: { flexDirection: 'row', gap: spacing.sm },
-  statCard: {
-    flex: 1, backgroundColor: colors.card, borderRadius: radius.md,
-    padding: spacing.md, gap: 4,
-  },
+  statCard: { flex: 1, backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: 4 },
   statNum: { fontSize: 28, fontWeight: '700', color: colors.text },
   statLabel: { ...typography.label },
 
   card: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm },
   cardTitle: { ...typography.heading },
   empty: { ...typography.label, textAlign: 'center', paddingVertical: spacing.sm },
+
+  cityList: { gap: spacing.sm, paddingVertical: 4 },
+  cityCard: { width: 88, alignItems: 'center', gap: 6 },
+  cityImg: { width: 80, height: 80, borderRadius: radius.md },
+  cityImgPlaceholder: {
+    width: 80, height: 80, borderRadius: radius.md,
+    backgroundColor: colors.background,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: colors.divider, borderStyle: 'dashed',
+  },
+  cityPlaceholderIcon: { fontSize: 24, color: colors.textTertiary },
+  cityName: { fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '500' },
 
   chart: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, paddingTop: 4 },
   barCol: { flex: 1, alignItems: 'center', gap: 4 },

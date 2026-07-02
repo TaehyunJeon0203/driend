@@ -6,8 +6,29 @@ export type Coordinate = { longitude: number; latitude: number };
 let driveId: string | null = null;
 let subscriber: Location.LocationSubscription | null = null;
 const buffer: Coordinate[] = [];
-const allCoords: Coordinate[] = []; // 거리 계산용
+const allCoords: Coordinate[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
+
+// iOS 시스템 역지오코딩 결과의 region → 한국 시/도 매핑
+const REGION_TO_KO: Record<string, string> = {
+  'Seoul': '서울특별시',
+  'Busan': '부산광역시',
+  'Daegu': '대구광역시',
+  'Incheon': '인천광역시',
+  'Gwangju': '광주광역시',
+  'Daejeon': '대전광역시',
+  'Ulsan': '울산광역시',
+  'Sejong': '세종특별자치시',
+  'Gyeonggi-do': '경기도',
+  'Gangwon-do': '강원특별자치도',
+  'Chungcheongbuk-do': '충청북도',
+  'Chungcheongnam-do': '충청남도',
+  'Jeollabuk-do': '전북특별자치도',
+  'Jeollanam-do': '전라남도',
+  'Gyeongsangbuk-do': '경상북도',
+  'Gyeongsangnam-do': '경상남도',
+  'Jeju-do': '제주특별자치도',
+};
 
 function haversineKm(a: Coordinate, b: Coordinate): number {
   const R = 6371;
@@ -26,25 +47,45 @@ function calcTotalDistance(coords: Coordinate[]): number {
   return total;
 }
 
+async function recordVisitedCities(userId: string, coords: Coordinate[]) {
+  // 시작, 중간, 끝 3개 좌표에서 도시 추출 (중복 제거)
+  const indices = [0, Math.floor(coords.length / 2), coords.length - 1];
+  const uniqueIndices = [...new Set(indices)];
+  const seenCodes = new Set<string>();
+
+  for (const idx of uniqueIndices) {
+    try {
+      const [geo] = await Location.reverseGeocodeAsync(coords[idx]);
+      const code = geo.region ?? geo.city ?? null;
+      if (!code || seenCodes.has(code)) continue;
+      seenCodes.add(code);
+      const name = REGION_TO_KO[code] ?? code;
+      await supabase.from('visited_cities').upsert(
+        { user_id: userId, city_code: code, city_name: name, first_visited_at: new Date().toISOString() },
+        { onConflict: 'user_id,city_code', ignoreDuplicates: true }
+      );
+    } catch {
+      // 역지오코딩 실패 시 무시
+    }
+  }
+}
+
 export function isTracking(): boolean {
   return driveId !== null;
 }
 
 export async function startTracking(onPoint?: (coord: Coordinate) => void): Promise<boolean> {
-  // 권한 요청 (이미 허용된 경우 시스템이 자동으로 granted 반환)
   await Location.requestForegroundPermissionsAsync();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
 
-  // 프로필 없으면 자동 생성
   await supabase.from('profiles').upsert({
     id: user.id,
     username: user.user_metadata?.nickname ?? `user_${user.id.slice(0, 6)}`,
     avatar_url: user.user_metadata?.avatar_url ?? null,
   }, { onConflict: 'id', ignoreDuplicates: true });
 
-  // 새 드라이브 생성
   const { data: drive, error } = await supabase
     .from('drives')
     .insert({ user_id: user.id, started_at: new Date().toISOString() })
@@ -56,7 +97,6 @@ export async function startTracking(onPoint?: (coord: Coordinate) => void): Prom
   }
 
   driveId = drive.id;
-
   allCoords.length = 0;
 
   subscriber = await Location.watchPositionAsync(
@@ -72,7 +112,6 @@ export async function startTracking(onPoint?: (coord: Coordinate) => void): Prom
     }
   );
 
-  // 10초마다 버퍼 flush
   flushTimer = setInterval(flushBuffer, 10_000);
   return true;
 }
@@ -85,12 +124,19 @@ export async function stopTracking(): Promise<string | null> {
 
   if (!driveId) return null;
   const distanceKm = calcTotalDistance(allCoords);
+  const coordSnapshot = [...allCoords];
   allCoords.length = 0;
+
+  const { data: { user } } = await supabase.auth.getUser();
 
   await supabase
     .from('drives')
     .update({ ended_at: new Date().toISOString(), distance_km: distanceKm })
     .eq('id', driveId);
+
+  if (user && coordSnapshot.length > 0) {
+    recordVisitedCities(user.id, coordSnapshot); // 비동기, await 안 함
+  }
 
   const id = driveId;
   driveId = null;
