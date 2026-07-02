@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import {
   NaverMapView,
   NaverMapPathOverlay,
   type NaverMapViewRef,
 } from '@mj-studio/react-native-naver-map';
 import { supabase } from '../../src/services/supabase';
-import { startTracking, stopTracking, Coordinate } from '../../src/services/locationTracker';
+import {
+  startTracking, stopTracking, isTracking,
+  addPointListener, addStopListener,
+} from '../../src/services/locationTracker';
 import { colors } from '../../src/theme';
 
 type RouteLine = { drive_id: string; coordinates: [number, number][] };
@@ -19,8 +24,6 @@ export default function MapScreen() {
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [pastLines, setPastLines] = useState<RouteLine[]>([]);
 
-  useEffect(() => { loadPastRoutes(); }, []);
-
   const loadPastRoutes = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -28,29 +31,53 @@ export default function MapScreen() {
     if (data) setPastLines(data);
   };
 
-  const toggleTracking = async () => {
-    if (tracking) {
-      await stopTracking();
+  // 포커스될 때마다 과거 경로 갱신 (딥링크 중지 후 탭 이동 시에도 반영)
+  useFocusEffect(useCallback(() => { loadPastRoutes(); }, []));
+
+  useEffect(() => {
+    // 딥링크로 이미 주행 중이면 상태 동기화
+    if (isTracking()) {
+      setTracking(true);
+      isFirstPoint.current = false;
+    }
+
+    // 전역 포인트 리스너: 딥링크/버튼 어디서 시작해도 경로 수신
+    const removePoint = addPointListener((coord) => {
+      const latLng = { latitude: coord.latitude, longitude: coord.longitude };
+      setRouteCoords((prev) => [...prev, latLng]);
+      if (isFirstPoint.current) {
+        isFirstPoint.current = false;
+        mapRef.current?.animateCameraTo({
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+          zoom: 15,
+          duration: 600,
+        });
+      }
+    });
+
+    // 전역 중지 리스너: 딥링크로 중지해도 지도 갱신
+    const removeStop = addStopListener(() => {
       setTracking(false);
       setRouteCoords([]);
       loadPastRoutes();
+    });
+
+    return () => {
+      removePoint();
+      removeStop();
+    };
+  }, []);
+
+  const toggleTracking = async () => {
+    if (tracking) {
+      await stopTracking();
+      // stopListeners가 위에서 처리하므로 여기선 상태만 관리
     } else {
       isFirstPoint.current = true;
       let ok = false;
       try {
-        ok = await startTracking((coord: Coordinate) => {
-          const latLng = { latitude: coord.latitude, longitude: coord.longitude };
-          setRouteCoords((prev) => [...prev, latLng]);
-          if (isFirstPoint.current) {
-            isFirstPoint.current = false;
-            mapRef.current?.animateCameraTo({
-              latitude: coord.latitude,
-              longitude: coord.longitude,
-              zoom: 15,
-              duration: 600,
-            });
-          }
-        });
+        ok = await startTracking();
       } catch (e: any) {
         Alert.alert('오류', e.message ?? String(e));
         return;
@@ -73,7 +100,6 @@ export default function MapScreen() {
         isShowCompass
         isExtentBoundedInKorea
       >
-        {/* 과거 주행 경로 */}
         {pastLines.map((line) =>
           line.coordinates?.length >= 2 ? (
             <NaverMapPathOverlay
@@ -86,7 +112,6 @@ export default function MapScreen() {
           ) : null
         )}
 
-        {/* 현재 주행 경로 */}
         {routeCoords.length >= 2 && (
           <NaverMapPathOverlay
             coords={routeCoords}
@@ -97,7 +122,6 @@ export default function MapScreen() {
         )}
       </NaverMapView>
 
-      {/* 주행 기록 버튼 */}
       <TouchableOpacity
         style={[styles.trackBtn, tracking && styles.trackBtnActive]}
         onPress={toggleTracking}

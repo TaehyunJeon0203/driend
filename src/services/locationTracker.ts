@@ -9,7 +9,20 @@ const buffer: Coordinate[] = [];
 const allCoords: Coordinate[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 
-// iOS 시스템 역지오코딩 결과의 region → 한국 시/도 매핑
+// 전역 리스너 — 딥링크/버튼 어디서 시작해도 지도가 포인트를 받을 수 있음
+const pointListeners = new Set<(coord: Coordinate) => void>();
+const stopListeners = new Set<() => void>();
+
+export function addPointListener(cb: (coord: Coordinate) => void): () => void {
+  pointListeners.add(cb);
+  return () => pointListeners.delete(cb);
+}
+
+export function addStopListener(cb: () => void): () => void {
+  stopListeners.add(cb);
+  return () => stopListeners.delete(cb);
+}
+
 const REGION_TO_KO: Record<string, string> = {
   'Seoul': '서울특별시',
   'Busan': '부산광역시',
@@ -48,7 +61,6 @@ function calcTotalDistance(coords: Coordinate[]): number {
 }
 
 async function recordVisitedCities(userId: string, coords: Coordinate[]) {
-  // 시작, 중간, 끝 3개 좌표에서 도시 추출 (중복 제거)
   const indices = [0, Math.floor(coords.length / 2), coords.length - 1];
   const uniqueIndices = [...new Set(indices)];
   const seenCodes = new Set<string>();
@@ -64,9 +76,7 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
         { user_id: userId, city_code: code, city_name: name, first_visited_at: new Date().toISOString() },
         { onConflict: 'user_id,city_code', ignoreDuplicates: true }
       );
-    } catch {
-      // 역지오코딩 실패 시 무시
-    }
+    } catch {}
   }
 }
 
@@ -74,7 +84,7 @@ export function isTracking(): boolean {
   return driveId !== null;
 }
 
-export async function startTracking(onPoint?: (coord: Coordinate) => void): Promise<boolean> {
+export async function startTracking(): Promise<boolean> {
   await Location.requestForegroundPermissionsAsync();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -108,7 +118,7 @@ export async function startTracking(onPoint?: (coord: Coordinate) => void): Prom
       };
       buffer.push(coord);
       allCoords.push(coord);
-      onPoint?.(coord);
+      pointListeners.forEach((cb) => cb(coord));
     }
   );
 
@@ -135,11 +145,13 @@ export async function stopTracking(): Promise<string | null> {
     .eq('id', driveId);
 
   if (user && coordSnapshot.length > 0) {
-    recordVisitedCities(user.id, coordSnapshot); // 비동기, await 안 함
+    recordVisitedCities(user.id, coordSnapshot);
   }
 
   const id = driveId;
   driveId = null;
+
+  stopListeners.forEach((cb) => cb());
   return id;
 }
 
