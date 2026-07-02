@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useCallback } from 'react';
+import * as Location from 'expo-location';
 import {
   NaverMapView,
   NaverMapPathOverlay,
@@ -21,8 +22,10 @@ export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
   const isFirstPoint = useRef(true);
   const [tracking, setTracking] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [pastLines, setPastLines] = useState<RouteLine[]>([]);
+  const [currentPosition, setCurrentPosition] = useState<LatLng | null>(null);
 
   const loadPastRoutes = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -31,7 +34,6 @@ export default function MapScreen() {
     if (data) setPastLines(data);
   };
 
-  // 포커스될 때마다 과거 경로 갱신 (딥링크 중지 후 탭 이동 시에도 반영)
   useFocusEffect(useCallback(() => { loadPastRoutes(); }, []));
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export default function MapScreen() {
     const removePoint = addPointListener((coord) => {
       const latLng = { latitude: coord.latitude, longitude: coord.longitude };
       setRouteCoords((prev) => [...prev, latLng]);
+      setCurrentPosition(latLng);
       if (isFirstPoint.current) {
         isFirstPoint.current = false;
         mapRef.current?.animateCameraTo({
@@ -63,30 +66,54 @@ export default function MapScreen() {
       loadPastRoutes();
     });
 
+    // 포그라운드 위치 감시 — 현재 위치 파란 점 표시용
+    let locationSub: Location.LocationSubscription | null = null;
+    Location.requestForegroundPermissionsAsync().then(({ status }) => {
+      if (status !== 'granted') return;
+      Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, distanceInterval: 5 },
+        (loc) => {
+          setCurrentPosition({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        }
+      ).then((sub) => { locationSub = sub; });
+    });
+
     return () => {
       removePoint();
       removeStop();
+      locationSub?.remove();
     };
   }, []);
 
   const toggleTracking = async () => {
-    if (tracking) {
-      await stopTracking();
-      // stopListeners가 위에서 처리하므로 여기선 상태만 관리
-    } else {
-      isFirstPoint.current = true;
-      let ok = false;
-      try {
-        ok = await startTracking();
-      } catch (e: any) {
-        Alert.alert('오류', e.message ?? String(e));
-        return;
+    if (toggling) return;
+    setToggling(true);
+    try {
+      if (tracking) {
+        await stopTracking();
+      } else {
+        isFirstPoint.current = true;
+        let ok = false;
+        try {
+          ok = await startTracking();
+        } catch (e: any) {
+          Alert.alert('오류', e.message ?? String(e));
+          return;
+        }
+        if (!ok) {
+          Alert.alert(
+            '위치 권한 필요',
+            '백그라운드 주행 기록을 위해 설정 > 개인정보 보호 > 위치 서비스에서 Driend를 "항상"으로 설정해주세요.',
+          );
+          return;
+        }
+        setTracking(true);
       }
-      if (!ok) {
-        Alert.alert('시작 실패', '로그를 확인해주세요.');
-        return;
-      }
-      setTracking(true);
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -99,6 +126,14 @@ export default function MapScreen() {
         isShowLocationButton
         isShowCompass
         isExtentBoundedInKorea
+        locationOverlay={currentPosition ? {
+          isVisible: true,
+          position: currentPosition,
+          circleRadius: 60,
+          circleColor: 'rgba(0, 120, 255, 0.08)',
+          circleOutlineWidth: 1,
+          circleOutlineColor: 'rgba(0, 120, 255, 0.25)',
+        } : undefined}
       >
         {pastLines.map((line) =>
           line.coordinates?.length >= 2 ? (
@@ -123,10 +158,14 @@ export default function MapScreen() {
       </NaverMapView>
 
       <TouchableOpacity
-        style={[styles.trackBtn, tracking && styles.trackBtnActive]}
+        style={[styles.trackBtn, tracking && styles.trackBtnActive, toggling && styles.trackBtnDisabled]}
         onPress={toggleTracking}
+        disabled={toggling}
       >
-        <Text style={styles.trackText}>{tracking ? '⏹ 기록 중지' : '▶ 주행 시작'}</Text>
+        {toggling
+          ? <ActivityIndicator size="small" color="#fff" />
+          : <Text style={styles.trackText}>{tracking ? '⏹ 기록 중지' : '▶ 주행 시작'}</Text>
+        }
       </TouchableOpacity>
 
       {tracking && (
@@ -154,8 +193,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 6,
     elevation: 5,
+    minWidth: 160,
+    alignItems: 'center',
   },
   trackBtnActive: { backgroundColor: colors.danger },
+  trackBtnDisabled: { opacity: 0.7 },
   trackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   recordingBadge: {
     position: 'absolute',

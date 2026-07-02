@@ -3,7 +3,7 @@ import { Linking } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../src/services/supabase';
-import { startTracking, stopTracking, isTracking } from '../src/services/locationTracker';
+import { startTracking, stopTracking, isTracking, cleanupOrphanedDrives } from '../src/services/locationTracker';
 
 async function handleDeepLink(url: string) {
   const path = url.replace('driend://', '');
@@ -29,6 +29,7 @@ export default function RootLayout() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
+        cleanupOrphanedDrives();
         router.replace('/(tabs)');
       } else {
         router.replace('/(auth)/login');

@@ -1,17 +1,37 @@
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { supabase } from './supabase';
+
+const LOCATION_TASK = 'driend-location-task';
 
 export type Coordinate = { longitude: number; latitude: number };
 
 let driveId: string | null = null;
-let subscriber: Location.LocationSubscription | null = null;
 const buffer: Coordinate[] = [];
 const allCoords: Coordinate[] = [];
-let flushTimer: ReturnType<typeof setInterval> | null = null;
 
-// 전역 리스너 — 딥링크/버튼 어디서 시작해도 지도가 포인트를 받을 수 있음
 const pointListeners = new Set<(coord: Coordinate) => void>();
 const stopListeners = new Set<() => void>();
+
+// 모듈 최상단에서 정의 — expo-task-manager 요구사항
+TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskManagerTaskBody<{ locations: Location.LocationObject[] }>) => {
+  if (error) {
+    console.error('[Tracker] background task error:', error.message);
+    return;
+  }
+  if (!data?.locations?.length) return;
+
+  for (const loc of data.locations) {
+    const coord: Coordinate = {
+      longitude: loc.coords.longitude,
+      latitude: loc.coords.latitude,
+    };
+    buffer.push(coord);
+    allCoords.push(coord);
+    pointListeners.forEach((cb) => cb(coord));
+  }
+  flushBuffer();
+});
 
 export function addPointListener(cb: (coord: Coordinate) => void): () => void {
   pointListeners.add(cb);
@@ -84,8 +104,24 @@ export function isTracking(): boolean {
   return driveId !== null;
 }
 
+// 앱 재시작 시 강제 종료로 인해 ended_at이 없는 드라이브 정리
+export async function cleanupOrphanedDrives(): Promise<void> {
+  if (isTracking()) return;
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  await supabase
+    .from('drives')
+    .update({ ended_at: new Date().toISOString(), distance_km: 0 })
+    .eq('user_id', user.id)
+    .is('ended_at', null);
+}
+
 export async function startTracking(): Promise<boolean> {
-  await Location.requestForegroundPermissionsAsync();
+  const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+  if (fgStatus !== 'granted') return false;
+
+  const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+  if (bgStatus !== 'granted') return false;
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
@@ -108,31 +144,35 @@ export async function startTracking(): Promise<boolean> {
 
   driveId = drive.id;
   allCoords.length = 0;
+  buffer.length = 0;
 
-  subscriber = await Location.watchPositionAsync(
-    { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 10, timeInterval: 3000 },
-    (loc) => {
-      const coord: Coordinate = {
-        longitude: loc.coords.longitude,
-        latitude: loc.coords.latitude,
-      };
-      buffer.push(coord);
-      allCoords.push(coord);
-      pointListeners.forEach((cb) => cb(coord));
-    }
-  );
+  // 이미 실행 중인 태스크가 있으면 정리 (앱 크래시 후 재시작 대비)
+  const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
+  if (alreadyRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
-  flushTimer = setInterval(flushBuffer, 10_000);
+  await Location.startLocationUpdatesAsync(LOCATION_TASK, {
+    accuracy: Location.Accuracy.BestForNavigation,
+    distanceInterval: 10,
+    timeInterval: 3000,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'Driend 주행 중',
+      notificationBody: '주행 경로를 기록하고 있습니다.',
+      notificationColor: '#047857',
+    },
+  });
+
   return true;
 }
 
 export async function stopTracking(): Promise<string | null> {
-  subscriber?.remove();
-  subscriber = null;
-  if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+  const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
+  if (isRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+
   await flushBuffer();
 
   if (!driveId) return null;
+
   const distanceKm = calcTotalDistance(allCoords);
   const coordSnapshot = [...allCoords];
   allCoords.length = 0;

@@ -53,7 +53,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "백그라운드에서 주행 경로를 자동으로 기록하기 위해 위치 정보가 필요합니다."
+          "locationAlwaysAndWhenInUsePermission": "백그라운드에서 주행 경로를 자동으로 기록하기 위해 위치 정보가 필요합니다.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
       [
