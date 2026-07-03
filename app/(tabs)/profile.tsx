@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, Alert, ActivityIndicator, Linking, Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
@@ -18,6 +19,13 @@ export default function ProfileScreen() {
   const [editingVehicle, setEditingVehicle] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  const copyUrl = async (url: string) => {
+    await Clipboard.setStringAsync(url);
+    setCopiedUrl(url);
+    setTimeout(() => setCopiedUrl(null), 2000);
+  };
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -93,6 +101,30 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const renderStep = (text: string, i: number) => {
+    const urlMatch = text.match(/(driend:\/\/[a-z-]+)/);
+    const url = urlMatch?.[1];
+    const isCopied = url && copiedUrl === url;
+
+    return (
+      <View key={i} style={s.step}>
+        <Text style={s.stepNum}>{i + 1}</Text>
+        {url ? (
+          <Text style={s.stepText}>
+            {text.split(url)[0]}
+            <Text
+              style={isCopied ? s.urlCopied : s.urlChip}
+              onPress={() => copyUrl(url)}
+            >{isCopied ? '복사됨 ✓' : url}</Text>
+            {text.split(url)[1]}
+          </Text>
+        ) : (
+          <Text style={s.stepText}>{text}</Text>
+        )}
+      </View>
+    );
   };
 
   if (loading) {
@@ -188,12 +220,7 @@ export default function ProfileScreen() {
               '동작 추가 → URL 열기 → driend://start-drive',
               '실행 전 확인 끄기 → 완료',
               '(선택) CarPlay 해제 시 → driend://stop-drive 동일하게 설정',
-            ].map((step, i) => (
-              <View key={i} style={s.step}>
-                <Text style={s.stepNum}>{i + 1}</Text>
-                <Text style={s.stepText}>{step}</Text>
-              </View>
-            ))}
+            ].map(renderStep)}
           </View>
           <Text style={s.guideSubTitle}>블루투스 자동화 (CarPlay 미사용 시)</Text>
           <View style={s.steps}>
@@ -202,12 +229,7 @@ export default function ProfileScreen() {
               '블루투스 → 차량 기기 선택 → 연결됨',
               '동작 추가 → URL 열기 → driend://start-drive',
               '실행 전 확인 끄기',
-            ].map((step, i) => (
-              <View key={i} style={s.step}>
-                <Text style={s.stepNum}>{i + 1}</Text>
-                <Text style={s.stepText}>{step}</Text>
-              </View>
-            ))}
+            ].map(renderStep)}
           </View>
           <TouchableOpacity style={s.shortcutsBtn} onPress={() => Linking.openURL('shortcuts://')}>
             <Text style={s.shortcutsBtnText}>단축어 앱 열기</Text>
@@ -294,6 +316,13 @@ const s = StyleSheet.create({
     fontSize: 12, fontWeight: '700', color: colors.primary, lineHeight: 22,
   },
   stepText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 20 },
+  urlChip: {
+    color: colors.primary, fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  urlCopied: {
+    color: colors.success, fontWeight: '700',
+  },
   shortcutsBtn: {
     marginTop: spacing.xs, backgroundColor: colors.primary,
     borderRadius: radius.sm, padding: spacing.sm + 2, alignItems: 'center',
