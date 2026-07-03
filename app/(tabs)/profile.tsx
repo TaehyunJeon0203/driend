@@ -216,19 +216,22 @@ export default function ProfileScreen() {
           <View style={s.steps}>
             {[
               '단축어 앱 → 자동화 탭 → + 버튼',
-              'CarPlay → 연결됨',
-              '동작 추가 → URL 열기 → driend://start-drive',
-              '실행 전 확인 끄기 → 완료',
-              '(선택) CarPlay 해제 시 → driend://stop-drive 동일하게 설정',
+              'CarPlay 선택',
+              '연결될 때 선택',
+              '즉시 실행 선택',
+              '새로운 단축어 생성 탭',
+              'URL 열기 → driend://start-drive 입력 → 완료',
+              '(선택) + 버튼으로 해제될 때도 동일하게 → driend://stop-drive',
             ].map(renderStep)}
           </View>
           <Text style={s.guideSubTitle}>블루투스 자동화 (CarPlay 미사용 시)</Text>
           <View style={s.steps}>
             {[
               '단축어 앱 → 자동화 탭 → + 버튼',
-              '블루투스 → 차량 기기 선택 → 연결됨',
-              '동작 추가 → URL 열기 → driend://start-drive',
-              '실행 전 확인 끄기',
+              '블루투스 → 차량 기기 선택',
+              '연결될 때 → 즉시 실행 선택',
+              '새로운 단축어 생성 탭',
+              'URL 열기 → driend://start-drive 입력 → 완료',
             ].map(renderStep)}
           </View>
           <TouchableOpacity style={s.shortcutsBtn} onPress={() => Linking.openURL('shortcuts://')}>
