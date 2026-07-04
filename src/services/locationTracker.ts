@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
+import { processMatchAsync } from './mapMatcher';
 
 const LOCATION_TASK = 'driend-location-task';
 const MONITOR_TASK = 'driend-monitor-task';
@@ -300,6 +301,9 @@ export async function stopTracking(): Promise<string | null> {
   stopListeners.forEach((cb) => cb());
 
   await startMonitoring();
+
+  // 주행 종료 후 비동기로 맵 매칭 처리
+  if (id) processMatchAsync(id).catch(() => {});
 
   return id;
 }

@@ -1,9 +1,8 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator, Linking, Platform,
+  StyleSheet, Alert, ActivityIndicator, Platform,
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
@@ -19,14 +18,7 @@ export default function ProfileScreen() {
   const [editingVehicle, setEditingVehicle] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isKakaoUser, setIsKakaoUser] = useState(false);
-
-  const copyUrl = async (url: string) => {
-    await Clipboard.setStringAsync(url);
-    setCopiedUrl(url);
-    setTimeout(() => setCopiedUrl(null), 2000);
-  };
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -103,30 +95,6 @@ export default function ProfileScreen() {
         },
       },
     ]);
-  };
-
-  const renderStep = (text: string, i: number) => {
-    const urlMatch = text.match(/(driend:\/\/[a-z-]+)/);
-    const url = urlMatch?.[1];
-    const isCopied = url && copiedUrl === url;
-
-    return (
-      <View key={i} style={s.step}>
-        <Text style={s.stepNum}>{i + 1}</Text>
-        {url ? (
-          <Text style={s.stepText}>
-            {text.split(url)[0]}
-            <Text
-              style={isCopied ? s.urlCopied : s.urlChip}
-              onPress={() => copyUrl(url)}
-            >{isCopied ? '복사됨 ✓' : url}</Text>
-            {text.split(url)[1]}
-          </Text>
-        ) : (
-          <Text style={s.stepText}>{text}</Text>
-        )}
-      </View>
-    );
   };
 
   if (loading) {
@@ -207,57 +175,17 @@ export default function ProfileScreen() {
       </View>
 
       {/* 자동 주행 감지 */}
-      {Platform.OS === 'ios' ? (
-        <View style={s.card}>
-          <Text style={s.cardTitle}>자동 주행 감지 (iOS)</Text>
-          <Text style={s.guideDesc}>
-            CarPlay 또는 차량 블루투스 연결 시 자동으로 주행이 시작되도록 단축어를 설정하세요.
-            한 번만 설정하면 이후 완전 자동으로 동작합니다.
-          </Text>
-          <Text style={s.guideSubTitle}>CarPlay 자동화 (권장)</Text>
-          <View style={s.steps}>
-            {[
-              '단축어 앱 → 자동화 탭 → + 버튼',
-              'CarPlay → 연결될 때 → 즉시 실행',
-              '새로운 단축어 생성 탭',
-              'URL 열기 → driend://start-drive 입력 → 완료',
-              '(선택) + 버튼으로 해제될 때도 동일하게 → driend://stop-drive',
-            ].map(renderStep)}
-          </View>
-          <Text style={s.guideSubTitle}>블루투스 자동화 (CarPlay 미사용 시)</Text>
-          <View style={s.steps}>
-            {[
-              '단축어 앱 → 자동화 탭 → + 버튼',
-              '블루투스 → 차량 기기 선택',
-              '연결될 때 → 즉시 실행 선택',
-              '새로운 단축어 생성 탭',
-              'URL 열기 → driend://start-drive 입력 → 완료',
-            ].map(renderStep)}
-          </View>
-          <TouchableOpacity style={s.shortcutsBtn} onPress={() => Linking.openURL('shortcuts://')}>
-            <Text style={s.shortcutsBtnText}>단축어 앱 열기</Text>
-          </TouchableOpacity>
+      <View style={s.card}>
+        <Text style={s.cardTitle}>자동 주행 감지</Text>
+        <Text style={s.guideDesc}>
+          별도 설정 없이 자동으로 주행을 감지합니다.{'\n'}
+          위치 권한을 "항상 허용"으로 설정해야 백그라운드에서 동작합니다.
+        </Text>
+        <View style={s.autoInfoList}>
+          <Text style={s.autoInfoItem}>▶ 시작: 25km/h 이상으로 30초 이상 주행</Text>
+          <Text style={s.autoInfoItem}>⏹ 종료: 5분 정차 시 알림 → 10분 시 자동 종료</Text>
         </View>
-      ) : (
-        <View style={s.card}>
-          <Text style={s.cardTitle}>자동 주행 감지 (Android)</Text>
-          <Text style={s.guideDesc}>
-            차량 블루투스 기기명을 등록하면, 해당 기기가 연결될 때 자동으로 주행이 시작됩니다.
-          </Text>
-          {vehicle?.bt_device_name ? (
-            <View style={s.btRegistered}>
-              <Text style={s.btRegisteredText}>✓ {vehicle.bt_device_name} 등록됨</Text>
-              <TouchableOpacity onPress={startEditing}>
-                <Text style={s.editBtn}>변경</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity style={s.shortcutsBtn} onPress={startEditing}>
-              <Text style={s.shortcutsBtnText}>블루투스 기기명 등록</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+      </View>
 
       {/* 로그아웃 */}
       <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
@@ -310,35 +238,8 @@ const s = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 
   guideDesc: { ...typography.label, lineHeight: 20 },
-  guideSubTitle: { fontSize: 13, fontWeight: '700', color: colors.text, marginTop: spacing.xs },
-  steps: { gap: spacing.xs },
-  step: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
-  stepNum: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: colors.primaryLight, textAlign: 'center',
-    fontSize: 12, fontWeight: '700', color: colors.primary, lineHeight: 22,
-  },
-  stepText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 20 },
-  urlChip: {
-    color: colors.primary, fontWeight: '700',
-    textDecorationLine: 'underline',
-  },
-  urlCopied: {
-    color: colors.success, fontWeight: '700',
-  },
-  shortcutsBtn: {
-    marginTop: spacing.xs, backgroundColor: colors.primary,
-    borderRadius: radius.sm, padding: spacing.sm + 2, alignItems: 'center',
-  },
-  shortcutsBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-
-  btRegistered: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.background,
-    borderRadius: radius.sm, padding: spacing.sm,
-  },
-  btRegisteredText: { fontSize: 14, fontWeight: '600', color: colors.primary },
+  autoInfoList: { gap: 6, marginTop: 4 },
+  autoInfoItem: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
 
   logoutBtn: {
     marginTop: spacing.sm, padding: spacing.md,
