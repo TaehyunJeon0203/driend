@@ -29,6 +29,7 @@ type RankEntry = {
 };
 
 type SearchUser = { user_id: string; username: string; avatar_url: string | null };
+type PendingRequest = { id: string; user_id: string; username: string; avatar_url: string | null };
 
 function formatValue(value: number, cat: Category) {
   if (cat.isCount) return String(Math.round(value));
@@ -56,12 +57,19 @@ export default function RankingScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // 친구 추가 모달
+  // 친구 상태
+  const [friendIds, setFriendIds] = useState<Set<string>>(new Set());
+  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+
+  // 검색 모달
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
-  const [friendIds, setFriendIds] = useState<Set<string>>(new Set());
   const [searching, setSearching] = useState(false);
+
+  // 받은 요청 모달
+  const [showRequests, setShowRequests] = useState(false);
 
   const category = CATEGORIES[categoryIdx];
 
@@ -76,18 +84,32 @@ export default function RankingScreen() {
       const res = await supabase.rpc('get_global_ranking', { p_category: category.key, p_limit: 30 });
       data = res.data ?? [];
     } else {
-      const res = await supabase.rpc('get_friend_ranking', { p_user_id: user.id, p_category: category.key });
-      data = res.data ?? [];
+      const [rankRes, acceptedRes, sentRes, receivedRes] = await Promise.all([
+        supabase.rpc('get_friend_ranking', { p_user_id: user.id, p_category: category.key }),
+        supabase.from('friendships').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`).eq('status', 'accepted'),
+        supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending'),
+        supabase.from('friendships').select('id, user_id, profiles!user_id(username, avatar_url)').eq('friend_id', user.id).eq('status', 'pending'),
+      ]);
 
-      // 친구 목록도 갱신
-      const frRes = await supabase.from('friendships')
-        .select('user_id, friend_id')
-        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
-      const ids = new Set<string>();
-      for (const f of frRes.data ?? []) {
-        ids.add(f.user_id === user.id ? f.friend_id : f.user_id);
+      data = rankRes.data ?? [];
+
+      const accepted = new Set<string>();
+      for (const f of acceptedRes.data ?? []) {
+        accepted.add(f.user_id === user.id ? f.friend_id : f.user_id);
       }
-      setFriendIds(ids);
+      setFriendIds(accepted);
+
+      const sent = new Set<string>();
+      for (const f of sentRes.data ?? []) sent.add(f.friend_id);
+      setSentIds(sent);
+
+      const received = (receivedRes.data ?? []).map((r: any) => ({
+        id: r.id,
+        user_id: r.user_id,
+        username: r.profiles?.username ?? '?',
+        avatar_url: r.profiles?.avatar_url ?? null,
+      }));
+      setPendingRequests(received);
     }
 
     setRankings(data);
@@ -108,20 +130,29 @@ export default function RankingScreen() {
   const addFriend = async (targetId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    if (friendIds.has(targetId)) {
-      Alert.alert('이미 친구예요');
-      return;
-    }
     const { error } = await supabase.from('friendships').insert({
       user_id: user.id,
       friend_id: targetId,
-      status: 'accepted',
+      status: 'pending',
     });
     if (error) {
       Alert.alert('오류', error.message);
     } else {
-      setFriendIds((prev) => new Set([...prev, targetId]));
+      setSentIds((prev) => new Set([...prev, targetId]));
     }
+  };
+
+  const acceptRequest = async (request: PendingRequest) => {
+    const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', request.id);
+    if (!error) {
+      setPendingRequests((prev) => prev.filter((r) => r.id !== request.id));
+      setFriendIds((prev) => new Set([...prev, request.user_id]));
+    }
+  };
+
+  const rejectRequest = async (request: PendingRequest) => {
+    await supabase.from('friendships').delete().eq('id', request.id);
+    setPendingRequests((prev) => prev.filter((r) => r.id !== request.id));
   };
 
   const rankColor = (rank: number) => {
@@ -168,9 +199,17 @@ export default function RankingScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.primary} />}
         >
           {tab === 'friends' && (
-            <TouchableOpacity style={s.addFriendBtn} onPress={() => setShowSearch(true)}>
-              <Text style={s.addFriendText}>+ 친구 추가</Text>
-            </TouchableOpacity>
+            <>
+              {pendingRequests.length > 0 && (
+                <TouchableOpacity style={s.requestBanner} onPress={() => setShowRequests(true)}>
+                  <Text style={s.requestBannerText}>친구 요청 {pendingRequests.length}건 대기 중</Text>
+                  <Text style={s.requestBannerArrow}>확인 →</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={s.addFriendBtn} onPress={() => setShowSearch(true)}>
+                <Text style={s.addFriendText}>+ 친구 추가</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           {rankings.length === 0 ? (
@@ -222,19 +261,56 @@ export default function RankingScreen() {
           </View>
 
           <ScrollView style={s.searchResults}>
-            {searchResults.map((u) => (
-              <View key={u.user_id} style={s.searchRow2}>
-                <Avatar name={u.username} />
-                <Text style={s.searchName}>{u.username}</Text>
-                <TouchableOpacity
-                  style={[s.addBtn, friendIds.has(u.user_id) && s.addBtnDone]}
-                  onPress={() => addFriend(u.user_id)}
-                  disabled={friendIds.has(u.user_id)}
-                >
-                  <Text style={s.addBtnText}>{friendIds.has(u.user_id) ? '친구' : '추가'}</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+            {searchResults.map((u) => {
+              const isFriend = friendIds.has(u.user_id);
+              const isSent = sentIds.has(u.user_id);
+              return (
+                <View key={u.user_id} style={s.searchRow2}>
+                  <Avatar name={u.username} />
+                  <Text style={s.searchName}>{u.username}</Text>
+                  <TouchableOpacity
+                    style={[s.addBtn, (isFriend || isSent) && s.addBtnDone]}
+                    onPress={() => addFriend(u.user_id)}
+                    disabled={isFriend || isSent}
+                  >
+                    <Text style={s.addBtnText}>
+                      {isFriend ? '친구' : isSent ? '요청됨' : '추가'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* 받은 친구 요청 모달 */}
+      <Modal visible={showRequests} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowRequests(false)}>
+        <View style={s.modal}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>친구 요청</Text>
+            <TouchableOpacity onPress={() => setShowRequests(false)}>
+              <Text style={s.modalClose}>닫기</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView>
+            {pendingRequests.length === 0 ? (
+              <Text style={s.empty}>받은 요청이 없어요</Text>
+            ) : (
+              pendingRequests.map((r) => (
+                <View key={r.id} style={s.requestRow}>
+                  <Avatar name={r.username} />
+                  <Text style={s.searchName}>{r.username}</Text>
+                  <TouchableOpacity style={s.acceptBtn} onPress={() => acceptRequest(r)}>
+                    <Text style={s.acceptBtnText}>수락</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.rejectBtn} onPress={() => rejectRequest(r)}>
+                    <Text style={s.rejectBtnText}>거절</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -266,6 +342,16 @@ const s = StyleSheet.create({
   chipTextActive: { color: '#fff', fontWeight: '600' },
 
   list: { flex: 1, marginTop: spacing.sm },
+
+  requestBanner: {
+    marginHorizontal: spacing.md, marginBottom: spacing.xs,
+    backgroundColor: colors.primaryLight, borderRadius: radius.md,
+    padding: spacing.md, flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'space-between',
+  },
+  requestBannerText: { fontSize: 14, fontWeight: '600', color: colors.primary },
+  requestBannerArrow: { fontSize: 13, color: colors.primary },
+
   addFriendBtn: {
     marginHorizontal: spacing.md, marginBottom: spacing.sm,
     backgroundColor: colors.card, borderRadius: radius.md,
@@ -317,4 +403,21 @@ const s = StyleSheet.create({
   },
   addBtnDone: { backgroundColor: colors.textTertiary },
   addBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+
+  requestRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.card, borderRadius: radius.md,
+    padding: spacing.md, marginBottom: spacing.xs,
+  },
+  acceptBtn: {
+    backgroundColor: colors.primary, borderRadius: radius.sm,
+    paddingHorizontal: 14, paddingVertical: 7,
+  },
+  acceptBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  rejectBtn: {
+    backgroundColor: colors.card, borderRadius: radius.sm,
+    paddingHorizontal: 14, paddingVertical: 7,
+    borderWidth: 1, borderColor: colors.divider,
+  },
+  rejectBtnText: { color: colors.textSecondary, fontWeight: '600', fontSize: 13 },
 });
