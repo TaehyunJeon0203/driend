@@ -20,6 +20,7 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [isKakaoUser, setIsKakaoUser] = useState(false);
 
   const copyUrl = async (url: string) => {
     await Clipboard.setStringAsync(url);
@@ -36,6 +37,7 @@ export default function ProfileScreen() {
       supabase.from('vehicles').select('id, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
     ]);
 
+    setIsKakaoUser(!!user.user_metadata?.kakao_id);
     if (profileRes.data) setProfile(profileRes.data);
     if (vehicleRes.data) {
       setVehicle(vehicleRes.data);
@@ -141,7 +143,7 @@ export default function ProfileScreen() {
           <Text style={s.avatarText}>{(profile?.username ?? '?')[0].toUpperCase()}</Text>
         </View>
         <Text style={s.username}>{profile?.username ?? '게스트'}</Text>
-        <Text style={s.userSub}>익명 계정 · 카카오 연동 준비 중</Text>
+        <Text style={s.userSub}>{isKakaoUser ? '카카오 계정' : '익명 계정'}</Text>
       </View>
 
       {/* 내 차량 */}
@@ -216,9 +218,7 @@ export default function ProfileScreen() {
           <View style={s.steps}>
             {[
               '단축어 앱 → 자동화 탭 → + 버튼',
-              'CarPlay 선택',
-              '연결될 때 선택',
-              '즉시 실행 선택',
+              'CarPlay → 연결될 때 → 즉시 실행',
               '새로운 단축어 생성 탭',
               'URL 열기 → driend://start-drive 입력 → 완료',
               '(선택) + 버튼으로 해제될 때도 동일하게 → driend://stop-drive',

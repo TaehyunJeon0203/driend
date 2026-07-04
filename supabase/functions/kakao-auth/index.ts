@@ -11,40 +11,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { code, redirect_uri } = await req.json();
+    const { access_token } = await req.json();
+    if (!access_token) throw new Error('access_token이 없습니다');
 
-    // 1. code → access token 교환
-    const tokenRes = await fetch('https://kauth.kakao.com/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: Deno.env.get('KAKAO_REST_API_KEY')!,
-        redirect_uri,
-        code,
-      }),
-    });
-
-    if (!tokenRes.ok) {
-      const err = await tokenRes.text();
-      throw new Error(`카카오 토큰 교환 실패: ${err}`);
-    }
-
-    const { access_token } = await tokenRes.json();
-
-    // 2. 카카오 유저 정보 조회
+    // 1. 카카오 유저 정보 조회
     const kakaoRes = await fetch('https://kapi.kakao.com/v2/user/me', {
       headers: { Authorization: `Bearer ${access_token}` },
     });
-
-    if (!kakaoRes.ok) throw new Error('카카오 유저 정보 조회 실패');
+    if (!kakaoRes.ok) throw new Error(`카카오 유저 정보 조회 실패: ${kakaoRes.status}`);
 
     const kakaoUser = await kakaoRes.json();
     const kakaoId = String(kakaoUser.id);
     const nickname = kakaoUser.kakao_account?.profile?.nickname ?? '드라이버';
     const avatarUrl = kakaoUser.kakao_account?.profile?.profile_image_url ?? null;
 
-    // 3. Supabase Admin 클라이언트
+    // 2. Supabase Admin 클라이언트
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -54,34 +35,33 @@ Deno.serve(async (req) => {
     const email = `kakao_${kakaoId}@driend.app`;
     const password = `kakao_${kakaoId}_${Deno.env.get('KAKAO_SECRET_SALT')}`;
 
-    // 4. 유저 생성 또는 로그인
-    const { data: existingUsers } = await supabase.auth.admin.listUsers();
-    const found = existingUsers?.users?.find((u) => u.email === email);
+    // 3. 로그인 먼저 시도
+    let signIn = await supabase.auth.signInWithPassword({ email, password });
 
-    if (!found) {
-      const { data: newUser, error } = await supabase.auth.admin.createUser({
+    // 4. 유저가 없으면 생성
+    if (signIn.error) {
+      const { data: newUser, error: createErr } = await supabase.auth.admin.createUser({
         email,
         password,
         email_confirm: true,
         user_metadata: { kakao_id: kakaoId, nickname, avatar_url: avatarUrl },
       });
-      if (error) throw error;
+      if (createErr) throw new Error(`유저 생성 실패: ${createErr.message}`);
 
-      await supabase.from('profiles').insert({
+      // 프로필 생성 (이미 있으면 무시)
+      await supabase.from('profiles').upsert({
         id: newUser.user!.id,
         username: nickname,
         avatar_url: avatarUrl,
-      });
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
+      // 재로그인
+      signIn = await supabase.auth.signInWithPassword({ email, password });
     }
 
-    // 5. 세션 발급
-    const { data: signIn, error: signInErr } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (signInErr) throw signInErr;
+    if (signIn.error) throw new Error(`로그인 실패: ${signIn.error.message}`);
 
-    return new Response(JSON.stringify(signIn), {
+    return new Response(JSON.stringify(signIn.data), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {

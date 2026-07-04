@@ -3,10 +3,11 @@ import { Linking } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import { initializeKakaoSDK } from '@react-native-kakao/core';
 import { supabase } from '../src/services/supabase';
 import {
   startTracking, stopTracking, isTracking,
-  cleanupOrphanedDrives, resetIdleTimer, DRIVE_IDLE_CATEGORY,
+  cleanupOrphanedDrives, resetIdleTimer, startMonitoring, DRIVE_IDLE_CATEGORY,
 } from '../src/services/locationTracker';
 
 // 포그라운드에서도 알림 표시
@@ -21,7 +22,7 @@ Notifications.setNotificationHandler({
 });
 
 async function handleDeepLink(url: string) {
-  const path = url.replace('driend://', '');
+  const path = url.replace(/^driend:\/\/+/, '');
   if (path === 'start-drive') {
     if (!isTracking()) {
       await startTracking();
@@ -37,6 +38,9 @@ async function handleDeepLink(url: string) {
 
 export default function RootLayout() {
   useEffect(() => {
+    // 카카오 SDK 초기화
+    initializeKakaoSDK(process.env.EXPO_PUBLIC_KAKAO_NATIVE_KEY!);
+
     // 알림 권한 요청 + 액션 카테고리 등록
     Notifications.requestPermissionsAsync();
     Notifications.setNotificationCategoryAsync(DRIVE_IDLE_CATEGORY, [
@@ -62,6 +66,7 @@ export default function RootLayout() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         cleanupOrphanedDrives();
+        startMonitoring();
         router.replace('/(tabs)');
       } else {
         router.replace('/(auth)/login');
@@ -82,6 +87,7 @@ export default function RootLayout() {
             avatar_url: session.user.user_metadata?.avatar_url ?? null,
           });
         }
+        startMonitoring();
         router.replace('/(tabs)');
       } else {
         router.replace('/(auth)/login');
