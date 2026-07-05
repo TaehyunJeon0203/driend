@@ -33,6 +33,9 @@ let coordCount = 0;
 let lastMovingTimestamp: number | null = null;
 let idleNotificationSent = false;
 
+// 최고 속도 (m/s)
+let maxSpeedMs = 0;
+
 // 자동 감지
 let drivingFastCount = 0;
 
@@ -99,6 +102,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     pointListeners.forEach((cb) => cb(coord));
 
     const speed = loc.coords.speed ?? -1;
+    if (speed > maxSpeedMs) maxSpeedMs = speed;
     if (speed >= 0 && speed > IDLE_SPEED_THRESHOLD) {
       lastMovingTimestamp = now;
       if (idleNotificationSent) {
@@ -184,6 +188,7 @@ function resetDriveState() {
   buffer.length = 0;
   lastMovingTimestamp = null;
   idleNotificationSent = false;
+  maxSpeedMs = 0;
 }
 
 export function isTracking(): boolean {
@@ -287,7 +292,11 @@ export async function stopTracking(): Promise<string | null> {
 
   await supabase
     .from('drives')
-    .update({ ended_at: new Date().toISOString(), distance_km: distanceKm })
+    .update({
+      ended_at: new Date().toISOString(),
+      distance_km: distanceKm,
+      max_speed_kmh: maxSpeedMs * 3.6,
+    })
     .eq('id', driveId);
 
   if (user && sampleCoords.length > 0) {

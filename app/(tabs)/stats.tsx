@@ -8,9 +8,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
-type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number };
+type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
 type MonthlyData = { month: string; distance_km: number };
-type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null };
+type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null };
 type Vehicle = { id: string; name: string };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 
@@ -159,6 +159,10 @@ export default function StatsScreen() {
           <Text style={s.statNum}>{stats?.visited_cities_count ?? 0}</Text>
           <Text style={s.statLabel}>방문 도시</Text>
         </View>
+        <View style={s.statCard}>
+          <Text style={s.statNum}>{Math.round(stats?.max_speed_kmh ?? 0)}</Text>
+          <Text style={s.statLabel}>최고 속도 km/h</Text>
+        </View>
       </View>
 
       {/* 방문 도시 스탬프 */}
@@ -234,6 +238,9 @@ export default function StatsScreen() {
               <Text style={s.driveDate}>{formatDate(d.started_at)}</Text>
               <Text style={s.driveDur}>{formatDuration(d.started_at, d.ended_at)}</Text>
               <Text style={s.driveKm}>{formatKm(d.distance_km)} km</Text>
+              {d.max_speed_kmh ? (
+                <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
+              ) : null}
             </View>
           ))
         )}
@@ -292,4 +299,5 @@ const s = StyleSheet.create({
   driveDate: { width: 44, ...typography.label },
   driveDur: { flex: 1, ...typography.body, color: colors.textSecondary },
   driveKm: { fontSize: 15, fontWeight: '600', color: colors.primary },
+  driveSpeed: { fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
 });
