@@ -39,6 +39,13 @@ let maxSpeedMs = 0;
 // 자동 감지
 let drivingFastCount = 0;
 
+// 여행 모드
+let activeTripId: string | null = null;
+
+export function setActiveTripId(id: string | null): void {
+  activeTripId = id;
+}
+
 const pointListeners = new Set<(coord: Coordinate) => void>();
 const stopListeners = new Set<() => void>();
 
@@ -245,7 +252,7 @@ export async function startTracking(): Promise<boolean> {
 
   const { data: drive, error } = await supabase
     .from('drives')
-    .insert({ user_id: user.id, started_at: new Date().toISOString() })
+    .insert({ user_id: user.id, started_at: new Date().toISOString(), trip_id: activeTripId })
     .select('id')
     .single();
   if (error || !drive) {

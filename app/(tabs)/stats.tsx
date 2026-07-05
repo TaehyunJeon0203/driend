@@ -1,15 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet,
+  View, Text, ScrollView, StyleSheet, Modal, TextInput,
   RefreshControl, ActivityIndicator, TouchableOpacity, Image, Alert,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/services/supabase';
+import { setActiveTripId } from '../../src/services/locationTracker';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
 type MonthlyData = { month: string; distance_km: number };
+type Trip = { id: string; name: string; started_at: string; ended_at: string | null; total_distance_km: number; total_drives: number };
 type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null };
 type Vehicle = { id: string; name: string };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
@@ -44,12 +46,18 @@ export default function StatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Drive | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [activeTrip, setActiveTripState] = useState<Trip | null>(null);
+  const [creatingTrip, setCreatingTrip] = useState(false);
+  const [tripName, setTripName] = useState('');
+  const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+  const [tripSaving, setTripSaving] = useState(false);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const [statsRes, monthlyRes, drivesRes, vehicleRes, citiesRes] = await Promise.all([
+    const [statsRes, monthlyRes, drivesRes, vehicleRes, citiesRes, tripsRes] = await Promise.all([
       supabase.rpc('get_my_stats', { p_user_id: user.id }),
       supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
       supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
@@ -58,6 +66,7 @@ export default function StatsScreen() {
         .select('id, city_code, city_name, photo_url')
         .eq('user_id', user.id)
         .order('first_visited_at', { ascending: false }),
+      supabase.rpc('get_my_trips', { p_user_id: user.id }),
     ]);
 
     if (statsRes.data?.[0]) setStats(statsRes.data[0]);
@@ -65,6 +74,11 @@ export default function StatsScreen() {
     if (drivesRes.data) setDrives(drivesRes.data);
     if (vehicleRes.data) setVehicle(vehicleRes.data);
     if (citiesRes.data) setCities(citiesRes.data);
+    if (tripsRes.data) {
+      const all = tripsRes.data as Trip[];
+      setActiveTripState(all.find((t) => !t.ended_at) ?? null);
+      setTrips(all.filter((t) => !!t.ended_at));
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -97,6 +111,45 @@ export default function StatsScreen() {
       )
     );
     setPendingDelete(null);
+  };
+
+  const startTrip = async () => {
+    if (!tripName.trim() || tripSaving) return;
+    setTripSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: trip } = await supabase
+        .from('trips')
+        .insert({ user_id: user.id, name: tripName.trim() })
+        .select('id, name, started_at, ended_at')
+        .single();
+      if (trip) {
+        const newTrip: Trip = { ...trip, total_distance_km: 0, total_drives: 0 };
+        setActiveTripState(newTrip);
+        setActiveTripId(newTrip.id);
+        setCreatingTrip(false);
+        setTripName('');
+      }
+    } finally {
+      setTripSaving(false);
+    }
+  };
+
+  const endTrip = () => {
+    if (!activeTrip) return;
+    Alert.alert('여행 종료', `"${activeTrip.name}" 여행을 종료할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '종료', style: 'destructive', onPress: async () => {
+          const now = new Date().toISOString();
+          await supabase.from('trips').update({ ended_at: now }).eq('id', activeTrip.id);
+          setTrips((prev) => [{ ...activeTrip, ended_at: now }, ...prev]);
+          setActiveTripState(null);
+          setActiveTripId(null);
+        },
+      },
+    ]);
   };
 
   const pickCityPhoto = async (city: VisitedCity) => {
@@ -193,6 +246,76 @@ export default function StatsScreen() {
           <Text style={s.statNum}>{Math.round(stats?.max_speed_kmh ?? 0)}</Text>
           <Text style={s.statLabel}>최고 속도 km/h</Text>
         </View>
+      </View>
+
+      {/* 여행 기록 */}
+      <View style={s.card}>
+        <Text style={s.cardTitle}>여행 기록</Text>
+        {activeTrip ? (
+          <View style={s.activeTripCard}>
+            <View style={s.activeTripHeader}>
+              <View style={s.activeTripDot} />
+              <Text style={s.activeTripName}>{activeTrip.name}</Text>
+            </View>
+            <Text style={s.activeTripStats}>
+              {formatKm(activeTrip.total_distance_km)} km · {activeTrip.total_drives}회 주행
+            </Text>
+            <TouchableOpacity style={s.endTripBtn} onPress={endTrip}>
+              <Text style={s.endTripText}>여행 종료</Text>
+            </TouchableOpacity>
+          </View>
+        ) : creatingTrip ? (
+          <View style={s.tripForm}>
+            <TextInput
+              style={s.tripInput}
+              value={tripName}
+              onChangeText={setTripName}
+              placeholder="여행 이름 (예: 제주도 여행)"
+              placeholderTextColor={colors.textTertiary}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={startTrip}
+            />
+            <View style={s.tripFormBtns}>
+              <TouchableOpacity onPress={() => { setCreatingTrip(false); setTripName(''); }}>
+                <Text style={s.tripCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.tripStartBtn, (!tripName.trim() || tripSaving) && { opacity: 0.5 }]}
+                onPress={startTrip}
+                disabled={!tripName.trim() || tripSaving}
+              >
+                {tripSaving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={s.tripStartText}>시작</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity style={s.createTripBtn} onPress={() => setCreatingTrip(true)}>
+            <Text style={s.createTripText}>+ 여행 만들기</Text>
+          </TouchableOpacity>
+        )}
+
+        {trips.length > 0 && (
+          <View style={s.tripList}>
+            {trips.map((trip, i) => (
+              <TouchableOpacity
+                key={trip.id}
+                style={[s.tripRow, i === 0 && { borderTopWidth: 0 }]}
+                onPress={() => setSelectedTrip(trip)}
+              >
+                <View style={s.tripRowInfo}>
+                  <Text style={s.tripRowName}>{trip.name}</Text>
+                  <Text style={s.tripRowDate}>
+                    {formatDate(trip.started_at)}{trip.ended_at ? ` - ${formatDate(trip.ended_at)}` : ''}
+                  </Text>
+                </View>
+                <Text style={s.tripRowKm}>{formatKm(trip.total_distance_km)} km</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* 방문 도시 스탬프 */}
@@ -298,6 +421,33 @@ export default function StatsScreen() {
         </TouchableOpacity>
       </View>
     )}
+
+    {/* 여행 상세 모달 */}
+    <Modal visible={!!selectedTrip} animationType="slide" transparent onRequestClose={() => setSelectedTrip(null)}>
+      <View style={s.modalOverlay}>
+        <View style={s.modalCard}>
+          <Text style={s.modalTitle}>{selectedTrip?.name}</Text>
+          <Text style={s.modalDate}>
+            {selectedTrip ? formatDate(selectedTrip.started_at) : ''}
+            {selectedTrip?.ended_at ? ` - ${formatDate(selectedTrip.ended_at)}` : ''}
+          </Text>
+          <View style={s.modalStats}>
+            <View style={s.modalStatItem}>
+              <Text style={s.modalStatNum}>{formatKm(selectedTrip?.total_distance_km ?? 0)}</Text>
+              <Text style={s.modalStatLabel}>km</Text>
+            </View>
+            <View style={s.modalDivider} />
+            <View style={s.modalStatItem}>
+              <Text style={s.modalStatNum}>{selectedTrip?.total_drives ?? 0}</Text>
+              <Text style={s.modalStatLabel}>회 주행</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={s.modalCloseBtn} onPress={() => setSelectedTrip(null)}>
+            <Text style={s.modalCloseText}>닫기</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
     </View>
   );
 }
@@ -369,4 +519,63 @@ const s = StyleSheet.create({
   },
   undoText: { fontSize: 14, color: '#fff' },
   undoBtn: { fontSize: 14, fontWeight: '700', color: colors.primary },
+
+  activeTripCard: { gap: spacing.sm },
+  activeTripHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  activeTripDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  activeTripName: { fontSize: 16, fontWeight: '700', color: colors.text },
+  activeTripStats: { fontSize: 13, color: colors.textSecondary },
+  endTripBtn: {
+    backgroundColor: colors.danger, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 8, alignSelf: 'flex-start',
+  },
+  endTripText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+
+  tripForm: { gap: spacing.sm },
+  tripInput: {
+    borderWidth: 1, borderColor: colors.divider, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    fontSize: 15, color: colors.text, backgroundColor: colors.background,
+  },
+  tripFormBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm, alignItems: 'center' },
+  tripCancelText: { fontSize: 14, color: colors.textSecondary },
+  tripStartBtn: {
+    backgroundColor: colors.primary, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 8, minWidth: 56, alignItems: 'center',
+  },
+  tripStartText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  createTripBtn: { alignSelf: 'flex-start' },
+  createTripText: { fontSize: 14, fontWeight: '600', color: colors.primary },
+
+  tripList: { borderTopWidth: 1, borderTopColor: colors.divider, marginTop: spacing.xs },
+  tripRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
+    borderTopWidth: 1, borderTopColor: colors.divider,
+  },
+  tripRowInfo: { flex: 1, gap: 2 },
+  tripRowName: { fontSize: 14, fontWeight: '600', color: colors.text },
+  tripRowDate: { fontSize: 12, color: colors.textTertiary },
+  tripRowKm: { fontSize: 14, fontWeight: '600', color: colors.primary },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: {
+    backgroundColor: colors.card, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    padding: spacing.lg, gap: spacing.md,
+  },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
+  modalDate: { fontSize: 13, color: colors.textTertiary },
+  modalStats: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
+    paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider,
+    borderBottomWidth: 1, borderBottomColor: colors.divider,
+  },
+  modalStatItem: { alignItems: 'center', gap: 4 },
+  modalStatNum: { fontSize: 32, fontWeight: '800', color: colors.text },
+  modalStatLabel: { fontSize: 13, color: colors.textSecondary },
+  modalDivider: { width: 1, height: 40, backgroundColor: colors.divider },
+  modalCloseBtn: {
+    backgroundColor: colors.background, borderRadius: radius.sm,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  modalCloseText: { fontSize: 15, fontWeight: '600', color: colors.text },
 });

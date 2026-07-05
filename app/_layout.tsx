@@ -7,7 +7,7 @@ import { initializeKakaoSDK } from '@react-native-kakao/core';
 import { supabase } from '../src/services/supabase';
 import {
   startTracking, stopTracking, isTracking,
-  cleanupOrphanedDrives, resetIdleTimer, startMonitoring, DRIVE_IDLE_CATEGORY,
+  cleanupOrphanedDrives, resetIdleTimer, startMonitoring, DRIVE_IDLE_CATEGORY, setActiveTripId,
 } from '../src/services/locationTracker';
 
 // 포그라운드에서도 알림 표시
@@ -63,10 +63,17 @@ export default function RootLayout() {
     Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
     const linkSub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
         cleanupOrphanedDrives();
         startMonitoring();
+        const { data: activeTrip } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .is('ended_at', null)
+          .maybeSingle();
+        setActiveTripId(activeTrip?.id ?? null);
         router.replace('/(tabs)');
       } else {
         router.replace('/(auth)/login');
@@ -88,6 +95,13 @@ export default function RootLayout() {
           });
         }
         startMonitoring();
+        const { data: activeTrip } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .is('ended_at', null)
+          .maybeSingle();
+        setActiveTripId(activeTrip?.id ?? null);
         router.replace('/(tabs)');
       } else {
         router.replace('/(auth)/login');
