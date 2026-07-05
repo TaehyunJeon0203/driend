@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '../../src/services/supabase';
 import { setActiveTripId } from '../../src/services/locationTracker';
 import { colors, spacing, radius, typography } from '../../src/theme';
@@ -195,20 +196,22 @@ export default function StatsScreen() {
       const ext = asset.uri.split('.').pop() ?? 'jpg';
       const path = `${user.id}/${city.city_code}.${ext}`;
 
-      const formData = new FormData();
-      formData.append('file', { uri: asset.uri, name: `photo.${ext}`, type: `image/${ext}` } as any);
-
       const { data: { session } } = await supabase.auth.getSession();
-      const uploadRes = await fetch(
+      const uploadResult = await FileSystem.uploadAsync(
         `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`,
+        asset.uri,
         {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${session!.access_token}`, 'x-upsert': 'true' },
-          body: formData,
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            Authorization: `Bearer ${session!.access_token}`,
+            'Content-Type': `image/${ext}`,
+            'x-upsert': 'true',
+          },
         }
       );
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({}));
+      if (uploadResult.status >= 300) {
+        const err = JSON.parse(uploadResult.body || '{}');
         throw new Error(err.message ?? '업로드 실패');
       }
 
