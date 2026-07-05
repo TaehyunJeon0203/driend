@@ -70,6 +70,24 @@ export default function StatsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); load(); };
 
+  const deleteDrive = (driveId: string) => {
+    Alert.alert(
+      '주행 삭제',
+      '이 주행 기록과 경로 데이터를 모두 삭제할까요?',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제', style: 'destructive',
+          onPress: async () => {
+            await supabase.from('route_points').delete().eq('drive_id', driveId);
+            await supabase.from('drives').delete().eq('id', driveId);
+            setDrives((prev) => prev.filter((d) => d.id !== driveId));
+          },
+        },
+      ]
+    );
+  };
+
   const pickCityPhoto = async (city: VisitedCity) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -241,6 +259,9 @@ export default function StatsScreen() {
               {d.max_speed_kmh ? (
                 <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
               ) : null}
+              <TouchableOpacity onPress={() => deleteDrive(d.id)} hitSlop={8}>
+                <Text style={s.driveDelete}>✕</Text>
+              </TouchableOpacity>
             </View>
           ))
         )}
@@ -300,4 +321,5 @@ const s = StyleSheet.create({
   driveDur: { flex: 1, ...typography.body, color: colors.textSecondary },
   driveKm: { fontSize: 15, fontWeight: '600', color: colors.primary },
   driveSpeed: { fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
+  driveDelete: { fontSize: 14, color: colors.textTertiary, paddingLeft: 8 },
 });
