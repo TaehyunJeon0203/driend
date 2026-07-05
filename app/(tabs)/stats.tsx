@@ -139,6 +139,22 @@ export default function StatsScreen() {
     }
   };
 
+  const deleteTrip = (trip: Trip) => {
+    Alert.alert(
+      '여행 삭제',
+      `"${trip.name}" 여행을 삭제할까요?\n주행 기록은 삭제되지 않아요.`,
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제', style: 'destructive', onPress: async () => {
+            await supabase.from('trips').delete().eq('id', trip.id);
+            setTrips((prev) => prev.filter((t) => t.id !== trip.id));
+          },
+        },
+      ]
+    );
+  };
+
   const endTrip = () => {
     if (!activeTrip) return;
     Alert.alert('여행 종료', `"${activeTrip.name}" 여행을 종료할까요?`, [
@@ -303,19 +319,20 @@ export default function StatsScreen() {
         {trips.length > 0 && (
           <View style={s.tripList}>
             {trips.map((trip, i) => (
-              <TouchableOpacity
-                key={trip.id}
-                style={[s.tripRow, i === 0 && { borderTopWidth: 0 }]}
-                onPress={() => setSelectedTrip(trip)}
-              >
-                <View style={s.tripRowInfo}>
-                  <Text style={s.tripRowName}>{trip.name}</Text>
-                  <Text style={s.tripRowDate}>
-                    {formatDate(trip.started_at)}{trip.ended_at ? ` - ${formatDate(trip.ended_at)}` : ''}
-                  </Text>
-                </View>
-                <Text style={s.tripRowKm}>{formatKm(trip.total_distance_km)} km</Text>
-              </TouchableOpacity>
+              <View key={trip.id} style={[s.tripRow, i === 0 && { borderTopWidth: 0 }]}>
+                <TouchableOpacity style={s.tripRowMain} onPress={() => setSelectedTrip(trip)}>
+                  <View style={s.tripRowInfo}>
+                    <Text style={s.tripRowName}>{trip.name}</Text>
+                    <Text style={s.tripRowDate}>
+                      {formatDate(trip.started_at)}{trip.ended_at ? ` - ${formatDate(trip.ended_at)}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={s.tripRowKm}>{formatKm(trip.total_distance_km)} km</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => deleteTrip(trip)} hitSlop={8}>
+                  <Text style={s.driveDelete}>✕</Text>
+                </TouchableOpacity>
+              </View>
             ))}
           </View>
         )}
@@ -555,6 +572,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
     borderTopWidth: 1, borderTopColor: colors.divider,
   },
+  tripRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   tripRowInfo: { flex: 1, gap: 2 },
   tripRowName: { fontSize: 14, fontWeight: '600', color: colors.text },
   tripRowDate: { fontSize: 12, color: colors.textTertiary },
