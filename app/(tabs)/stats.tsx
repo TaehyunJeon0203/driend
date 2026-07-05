@@ -194,11 +194,10 @@ export default function StatsScreen() {
 
       const response = await fetch(asset.uri);
       const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
 
       const { error: uploadError } = await supabase.storage
         .from('city-photos')
-        .upload(path, arrayBuffer, { contentType: `image/${ext}`, upsert: true });
+        .upload(path, blob, { contentType: `image/${ext}`, upsert: true });
 
       if (uploadError) throw uploadError;
 
