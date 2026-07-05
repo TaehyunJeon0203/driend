@@ -290,12 +290,27 @@ export async function stopTracking(): Promise<string | null> {
 
   const { data: { user } } = await supabase.auth.getUser();
 
+  let startAddress: string | null = null;
+  let endAddress: string | null = null;
+  try {
+    if (firstCoord) {
+      const [g] = await Location.reverseGeocodeAsync(firstCoord);
+      startAddress = g.city ?? g.district ?? REGION_TO_KO[g.region ?? ''] ?? g.region ?? null;
+    }
+    if (prevCoord) {
+      const [g] = await Location.reverseGeocodeAsync(prevCoord);
+      endAddress = g.city ?? g.district ?? REGION_TO_KO[g.region ?? ''] ?? g.region ?? null;
+    }
+  } catch {}
+
   await supabase
     .from('drives')
     .update({
       ended_at: new Date().toISOString(),
       distance_km: distanceKm,
       max_speed_kmh: maxSpeedMs * 3.6,
+      start_address: startAddress,
+      end_address: endAddress,
     })
     .eq('id', driveId);
 

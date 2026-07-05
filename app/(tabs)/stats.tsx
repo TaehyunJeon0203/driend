@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
   RefreshControl, ActivityIndicator, TouchableOpacity, Image, Alert,
@@ -10,7 +10,7 @@ import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
 type MonthlyData = { month: string; distance_km: number };
-type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null };
+type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null };
 type Vehicle = { id: string; name: string };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 
@@ -39,9 +39,11 @@ export default function StatsScreen() {
   const [drives, setDrives] = useState<Drive[]>([]);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [cities, setCities] = useState<VisitedCity[]>([]);
-  const [uploading, setUploading] = useState<string | null>(null); // city_code being uploaded
+  const [uploading, setUploading] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Drive | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -70,22 +72,31 @@ export default function StatsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); load(); };
 
-  const deleteDrive = (driveId: string) => {
-    Alert.alert(
-      '주행 삭제',
-      '이 주행 기록과 경로 데이터를 모두 삭제할까요?',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '삭제', style: 'destructive',
-          onPress: async () => {
-            await supabase.from('route_points').delete().eq('drive_id', driveId);
-            await supabase.from('drives').delete().eq('id', driveId);
-            setDrives((prev) => prev.filter((d) => d.id !== driveId));
-          },
-        },
-      ]
+  const confirmDelete = async (drive: Drive) => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    // 이전 pendingDelete가 있으면 실제 삭제 확정
+    if (pendingDelete) {
+      await supabase.from('route_points').delete().eq('drive_id', pendingDelete.id);
+      await supabase.from('drives').delete().eq('id', pendingDelete.id);
+    }
+    setDrives((prev) => prev.filter((d) => d.id !== drive.id));
+    setPendingDelete(drive);
+    undoTimerRef.current = setTimeout(async () => {
+      await supabase.from('route_points').delete().eq('drive_id', drive.id);
+      await supabase.from('drives').delete().eq('id', drive.id);
+      setPendingDelete(null);
+    }, 5000);
+  };
+
+  const undoDelete = () => {
+    if (!pendingDelete) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setDrives((prev) =>
+      [...prev, pendingDelete].sort((a, b) =>
+        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+      )
     );
+    setPendingDelete(null);
   };
 
   const pickCityPhoto = async (city: VisitedCity) => {
@@ -151,8 +162,9 @@ export default function StatsScreen() {
   const maxKm = Math.max(...monthly.map((m) => m.distance_km), 1);
 
   return (
+    <View style={s.container}>
     <ScrollView
-      style={s.container}
+      style={s.flex}
       contentContainerStyle={s.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
@@ -253,13 +265,22 @@ export default function StatsScreen() {
         ) : (
           drives.map((d, i) => (
             <View key={d.id} style={[s.driveRow, i === 0 && { borderTopWidth: 0 }]}>
-              <Text style={s.driveDate}>{formatDate(d.started_at)}</Text>
-              <Text style={s.driveDur}>{formatDuration(d.started_at, d.ended_at)}</Text>
-              <Text style={s.driveKm}>{formatKm(d.distance_km)} km</Text>
-              {d.max_speed_kmh ? (
-                <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
-              ) : null}
-              <TouchableOpacity onPress={() => deleteDrive(d.id)} hitSlop={8}>
+              <View style={s.driveMain}>
+                {(d.start_address || d.end_address) ? (
+                  <Text style={s.driveRoute} numberOfLines={1}>
+                    {d.start_address ?? '?'} → {d.end_address ?? '?'}
+                  </Text>
+                ) : null}
+                <View style={s.driveInfo}>
+                  <Text style={s.driveDate}>{formatDate(d.started_at)}</Text>
+                  <Text style={s.driveDur}>{formatDuration(d.started_at, d.ended_at)}</Text>
+                  <Text style={s.driveKm}>{formatKm(d.distance_km)} km</Text>
+                  {d.max_speed_kmh ? (
+                    <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
+                  ) : null}
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => confirmDelete(d)} hitSlop={8}>
                 <Text style={s.driveDelete}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -267,11 +288,23 @@ export default function StatsScreen() {
         )}
       </View>
     </ScrollView>
+
+    {/* 되돌리기 배너 */}
+    {pendingDelete && (
+      <View style={s.undoBanner}>
+        <Text style={s.undoText}>주행 기록이 삭제되었습니다</Text>
+        <TouchableOpacity onPress={undoDelete}>
+          <Text style={s.undoBtn}>되돌리기</Text>
+        </TouchableOpacity>
+      </View>
+    )}
+    </View>
   );
 }
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  flex: { flex: 1 },
   content: { padding: spacing.md, paddingTop: 56, gap: spacing.sm },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
@@ -322,4 +355,18 @@ const s = StyleSheet.create({
   driveKm: { fontSize: 15, fontWeight: '600', color: colors.primary },
   driveSpeed: { fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
   driveDelete: { fontSize: 14, color: colors.textTertiary, paddingLeft: 8 },
+  driveMain: { flex: 1, gap: 2 },
+  driveRoute: { fontSize: 13, fontWeight: '600', color: colors.text },
+  driveInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+
+  undoBanner: {
+    position: 'absolute', bottom: 80, left: spacing.md, right: spacing.md,
+    backgroundColor: colors.text, borderRadius: radius.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.md, paddingVertical: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2, shadowRadius: 6, elevation: 6,
+  },
+  undoText: { fontSize: 14, color: '#fff' },
+  undoBtn: { fontSize: 14, fontWeight: '700', color: colors.primary },
 });
