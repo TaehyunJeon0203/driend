@@ -52,31 +52,34 @@ export default function StatsScreen() {
   const [tripSaving, setTripSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-    const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes] = await Promise.all([
-      supabase.rpc('get_my_stats', { p_user_id: user.id }),
-      supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
-      supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
-      supabase.from('visited_cities')
-        .select('id, city_code, city_name, photo_url')
-        .eq('user_id', user.id)
-        .order('first_visited_at', { ascending: false }),
-      supabase.rpc('get_my_trips', { p_user_id: user.id }),
-    ]);
+      const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes] = await Promise.all([
+        supabase.rpc('get_my_stats', { p_user_id: user.id }),
+        supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
+        supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
+        supabase.from('visited_cities')
+          .select('id, city_code, city_name, photo_url')
+          .eq('user_id', user.id)
+          .order('first_visited_at', { ascending: false }),
+        supabase.rpc('get_my_trips', { p_user_id: user.id }),
+      ]);
 
-    if (statsRes.data?.[0]) setStats(statsRes.data[0]);
-    if (monthlyRes.data) setMonthly(monthlyRes.data);
-    if (drivesRes.data) setDrives(drivesRes.data);
-    if (citiesRes.data) setCities(citiesRes.data);
-    if (tripsRes.data) {
-      const all = tripsRes.data as Trip[];
-      setActiveTripState(all.find((t) => !t.ended_at) ?? null);
-      setTrips(all.filter((t) => !!t.ended_at));
+      if (statsRes.data?.[0]) setStats(statsRes.data[0]);
+      if (monthlyRes.data) setMonthly(monthlyRes.data);
+      if (drivesRes.data) setDrives(drivesRes.data);
+      if (citiesRes.data) setCities(citiesRes.data);
+      if (tripsRes.data) {
+        const all = tripsRes.data as Trip[];
+        setActiveTripState(all.find((t) => !t.ended_at) ?? null);
+        setTrips(all.filter((t) => !!t.ended_at));
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    setLoading(false);
-    setRefreshing(false);
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
