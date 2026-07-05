@@ -232,6 +232,36 @@ export default function StatsScreen() {
     }
   };
 
+  const deleteCityPhoto = async (city: VisitedCity) => {
+    await supabase.from('visited_cities').update({ photo_url: null }).eq('id', city.id);
+    setCities((prev) => prev.map((c) => c.id === city.id ? { ...c, photo_url: null } : c));
+  };
+
+  const deleteCity = (city: VisitedCity) => {
+    Alert.alert('방문 기록 삭제', `"${city.city_name}" 방문 기록을 삭제할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제', style: 'destructive', onPress: async () => {
+          await supabase.from('visited_cities').delete().eq('id', city.id);
+          setCities((prev) => prev.filter((c) => c.id !== city.id));
+        },
+      },
+    ]);
+  };
+
+  const showCityOptions = (city: VisitedCity) => {
+    const buttons: any[] = [];
+    if (city.photo_url) {
+      buttons.push({ text: '사진 변경', onPress: () => pickCityPhoto(city) });
+      buttons.push({ text: '사진 삭제', style: 'destructive', onPress: () => deleteCityPhoto(city) });
+    } else {
+      buttons.push({ text: '사진 추가', onPress: () => pickCityPhoto(city) });
+    }
+    buttons.push({ text: '방문 기록 삭제', style: 'destructive', onPress: () => deleteCity(city) });
+    buttons.push({ text: '취소', style: 'cancel' });
+    Alert.alert(city.city_name, undefined, buttons);
+  };
+
   if (loading) {
     return <View style={s.center}><ActivityIndicator size="large" color={colors.primary} /></View>;
   }
@@ -354,7 +384,7 @@ export default function StatsScreen() {
               <TouchableOpacity
                 key={city.id}
                 style={s.cityCard}
-                onPress={() => pickCityPhoto(city)}
+                onPress={() => showCityOptions(city)}
                 disabled={uploading === city.city_code}
               >
                 {uploading === city.city_code ? (
