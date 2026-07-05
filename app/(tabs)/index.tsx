@@ -6,7 +6,6 @@ import {
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 import {
   NaverMapView,
   NaverMapPathOverlay,
@@ -189,23 +188,20 @@ export default function MapScreen() {
       const ext = asset.uri.split('.').pop() ?? 'jpg';
       const path = `${user.id}/${province.code}.${ext}`;
       const { data: { session } } = await supabase.auth.getSession();
-      const uploadResult = await FileSystem.uploadAsync(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`,
-        asset.uri,
-        {
-          httpMethod: 'POST',
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: {
-            Authorization: `Bearer ${session!.access_token}`,
-            'Content-Type': `image/${ext}`,
-            'x-upsert': 'true',
-          },
-        }
-      );
-      if (uploadResult.status >= 300) {
-        const err = JSON.parse(uploadResult.body || '{}');
-        throw new Error(err.message ?? '업로드 실패');
-      }
+      const formData = new FormData();
+      formData.append('file', { uri: asset.uri, name: `photo.${ext}`, type: `image/${ext}` } as any);
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
+        xhr.setRequestHeader('Authorization', `Bearer ${session!.access_token}`);
+        xhr.setRequestHeader('x-upsert', 'true');
+        xhr.onload = () => {
+          if (xhr.status < 300) resolve();
+          else { try { reject(new Error(JSON.parse(xhr.responseText).message)); } catch { reject(new Error('업로드 실패')); } }
+        };
+        xhr.onerror = () => reject(new Error('네트워크 오류'));
+        xhr.send(formData);
+      });
 
       const { data: { publicUrl } } = supabase.storage.from('city-photos').getPublicUrl(path);
       await supabase.from('visited_cities')
