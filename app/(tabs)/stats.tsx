@@ -195,14 +195,22 @@ export default function StatsScreen() {
       const ext = asset.uri.split('.').pop() ?? 'jpg';
       const path = `${user.id}/${city.city_code}.${ext}`;
 
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
+      const formData = new FormData();
+      formData.append('file', { uri: asset.uri, name: `photo.${ext}`, type: `image/${ext}` } as any);
 
-      const { error: uploadError } = await supabase.storage
-        .from('city-photos')
-        .upload(path, blob, { contentType: `image/${ext}`, upsert: true });
-
-      if (uploadError) throw uploadError;
+      const { data: { session } } = await supabase.auth.getSession();
+      const uploadRes = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session!.access_token}`, 'x-upsert': 'true' },
+          body: formData,
+        }
+      );
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.message ?? '업로드 실패');
+      }
 
       const { data: { publicUrl } } = supabase.storage
         .from('city-photos')
