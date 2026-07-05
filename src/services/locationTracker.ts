@@ -15,9 +15,9 @@ const IDLE_SPEED_THRESHOLD = 1.5;  // m/s ≈ 5 km/h
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;   // 5분 → 알림
 const AUTO_STOP_MS = 10 * 60 * 1000;     // 10분 → 자동 종료
 
-// 자동 감지 (25 km/h 이상을 15초 간격으로 2회 연속 감지)
-const AUTO_START_SPEED_MS = 25 / 3.6;
-const AUTO_START_CONFIRM_COUNT = 2;
+// 자동 감지 (13 km/h 이상을 10초 간격으로 1회 감지)
+const AUTO_START_SPEED_MS = 13 / 3.6;
+const AUTO_START_CONFIRM_COUNT = 1;
 
 // 주행 상태
 let driveId: string | null = null;
@@ -217,8 +217,8 @@ export async function startMonitoring(): Promise<void> {
 
   await Location.startLocationUpdatesAsync(MONITOR_TASK, {
     accuracy: Location.Accuracy.Balanced,
-    timeInterval: 15000,
-    distanceInterval: 100,
+    timeInterval: 10000,
+    distanceInterval: 30,
     showsBackgroundLocationIndicator: false,
   });
 }
