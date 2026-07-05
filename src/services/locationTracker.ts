@@ -174,10 +174,10 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
   for (const coord of coords) {
     try {
       const [geo] = await Location.reverseGeocodeAsync(coord);
-      const code = geo.city ?? geo.region ?? null;
+      const code = geo.region ?? null;  // province code for map matching
       if (!code || seenCodes.has(code)) continue;
       seenCodes.add(code);
-      const name = geo.city ?? REGION_TO_KO[geo.region ?? ''] ?? geo.region ?? code;
+      const name = geo.city ?? REGION_TO_KO[code] ?? code;  // display city name if available
       await supabase.from('visited_cities').upsert(
         { user_id: userId, city_code: code, city_name: name, first_visited_at: new Date().toISOString() },
         { onConflict: 'user_id,city_code', ignoreDuplicates: true }
