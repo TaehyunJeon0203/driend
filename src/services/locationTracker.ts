@@ -158,6 +158,18 @@ const REGION_TO_KO: Record<string, string> = {
   'Jeju-do': '제주특별자치도',
 };
 
+// 한국어 지역명 → 영문 province 코드 (iOS 한국어 로케일 대응)
+const KO_TO_PROVINCE_CODE: Record<string, string> = {
+  '서울특별시': 'Seoul', '부산광역시': 'Busan', '대구광역시': 'Daegu',
+  '인천광역시': 'Incheon', '광주광역시': 'Gwangju', '대전광역시': 'Daejeon',
+  '울산광역시': 'Ulsan', '세종특별자치시': 'Sejongsi', '경기도': 'Gyeonggi-do',
+  '강원특별자치도': 'Gangwon-do', '강원도': 'Gangwon-do',
+  '충청북도': 'Chungcheongbuk-do', '충청남도': 'Chungcheongnam-do',
+  '전북특별자치도': 'Jeollabuk-do', '전라북도': 'Jeollabuk-do',
+  '전라남도': 'Jeollanam-do', '경상북도': 'Gyeongsangbuk-do',
+  '경상남도': 'Gyeongsangnam-do', '제주특별자치도': 'Jeju-do',
+};
+
 function haversineKm(a: Coordinate, b: Coordinate): number {
   const R = 6371;
   const dLat = (b.latitude - a.latitude) * (Math.PI / 180);
@@ -174,10 +186,13 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
   for (const coord of coords) {
     try {
       const [geo] = await Location.reverseGeocodeAsync(coord);
-      const code = geo.region ?? null;  // province code for map matching
-      if (!code || seenCodes.has(code)) continue;
+      const rawRegion = geo.region ?? null;
+      if (!rawRegion) continue;
+      // iOS 한국어 로케일은 "경기도" 반환, 영어 로케일은 "Gyeonggi-do" 반환 → 통일
+      const code = KO_TO_PROVINCE_CODE[rawRegion] ?? rawRegion;
+      if (seenCodes.has(code)) continue;
       seenCodes.add(code);
-      const name = geo.city ?? REGION_TO_KO[code] ?? code;  // display city name if available
+      const name = geo.city ?? REGION_TO_KO[code] ?? rawRegion;
       await supabase.from('visited_cities').upsert(
         { user_id: userId, city_code: code, city_name: name, first_visited_at: new Date().toISOString() },
         { onConflict: 'user_id,city_code', ignoreDuplicates: true }
