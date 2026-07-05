@@ -193,7 +193,7 @@ export default function StatsScreen() {
     try {
       const asset = result.assets[0];
       const ext = asset.uri.split('.').pop() ?? 'jpg';
-      const path = `${user.id}/${city.city_code}.${ext}`;
+      const path = `${user.id}/${city.id}.${ext}`;
 
       const { data: { session } } = await supabase.auth.getSession();
       const formData = new FormData();
