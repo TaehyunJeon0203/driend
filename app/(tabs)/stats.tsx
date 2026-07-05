@@ -69,7 +69,6 @@ export default function StatsScreen() {
     if (statsRes.data?.[0]) setStats(statsRes.data[0]);
     if (monthlyRes.data) setMonthly(monthlyRes.data);
     if (drivesRes.data) setDrives(drivesRes.data);
-    if (vehicleRes.data) setVehicle(vehicleRes.data);
     if (citiesRes.data) setCities(citiesRes.data);
     if (tripsRes.data) {
       const all = tripsRes.data as Trip[];
