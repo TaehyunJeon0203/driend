@@ -119,11 +119,12 @@ export default function StatsScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: trip } = await supabase
+      const { data: trip, error } = await supabase
         .from('trips')
         .insert({ user_id: user.id, name: tripName.trim() })
         .select('id, name, started_at, ended_at')
         .single();
+      if (error) { Alert.alert('오류', error.message); return; }
       if (trip) {
         const newTrip: Trip = { ...trip, total_distance_km: 0, total_drives: 0 };
         setActiveTripState(newTrip);
@@ -131,6 +132,8 @@ export default function StatsScreen() {
         setCreatingTrip(false);
         setTripName('');
       }
+    } catch (e: any) {
+      Alert.alert('오류', e.message ?? String(e));
     } finally {
       setTripSaving(false);
     }
