@@ -13,7 +13,6 @@ type Stats = { total_distance_km: number; total_drives: number; visited_cities_c
 type MonthlyData = { month: string; distance_km: number };
 type Trip = { id: string; name: string; started_at: string; ended_at: string | null; total_distance_km: number; total_drives: number };
 type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null };
-type Vehicle = { id: string; name: string };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 
 const BAR_MAX_H = 72;
@@ -39,7 +38,6 @@ export default function StatsScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [monthly, setMonthly] = useState<MonthlyData[]>([]);
   const [drives, setDrives] = useState<Drive[]>([]);
-  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [cities, setCities] = useState<VisitedCity[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,11 +55,10 @@ export default function StatsScreen() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const [statsRes, monthlyRes, drivesRes, vehicleRes, citiesRes, tripsRes] = await Promise.all([
+    const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes] = await Promise.all([
       supabase.rpc('get_my_stats', { p_user_id: user.id }),
       supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
       supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
-      supabase.from('vehicles').select('id, name').eq('user_id', user.id).maybeSingle(),
       supabase.from('visited_cities')
         .select('id, city_code, city_name, photo_url')
         .eq('user_id', user.id)
@@ -390,16 +387,6 @@ export default function StatsScreen() {
         )}
       </View>
 
-      {/* 내 차량 */}
-      <View style={s.card}>
-        <Text style={s.cardTitle}>내 차량</Text>
-        {vehicle ? (
-          <Text style={s.vehicleName}>{vehicle.name}</Text>
-        ) : (
-          <Text style={s.empty}>등록된 차량이 없어요 → 프로필에서 추가</Text>
-        )}
-      </View>
-
       {/* 최근 주행 */}
       <View style={[s.card, { marginBottom: spacing.xl }]}>
         <Text style={s.cardTitle}>최근 주행</Text>
@@ -513,8 +500,6 @@ const s = StyleSheet.create({
   barTrack: { width: '100%', height: BAR_MAX_H, justifyContent: 'flex-end' },
   bar: { backgroundColor: colors.primary, borderRadius: 4, width: '100%', opacity: 0.9 },
   barLbl: { fontSize: 10, color: colors.textSecondary },
-
-  vehicleName: { fontSize: 17, fontWeight: '600', color: colors.text },
 
   driveRow: {
     flexDirection: 'row', alignItems: 'center',
