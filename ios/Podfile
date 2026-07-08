@@ -19,6 +19,7 @@ ENV['RCT_USE_RN_DEP'] ||= podfile_properties['ios.buildReactNativeFromSource'] =
 ENV['RCT_USE_PREBUILT_RNCORE'] ||= podfile_properties['ios.buildReactNativeFromSource'] == 'true' ? '0' : '1'
 ENV['RCT_HERMES_V1_ENABLED'] ||= '0' if podfile_properties['expo.useHermesV1'] == 'false'
 ENV['EXPO_USE_PRECOMPILED_MODULES'] ||= '1' if podfile_properties['EXPO_USE_PRECOMPILED_MODULES'] != 'false'
+ENV['EXPO_USE_PRECOMPILED_MODULES'] = '0' if podfile_properties['EXPO_USE_PRECOMPILED_MODULES'] == 'false'
 platform :ios, podfile_properties['ios.deploymentTarget'] || '16.4'
 
 prepare_react_native_project!
@@ -65,11 +66,24 @@ target 'Driend' do
     # iOS 26 SDK 호환: 낮은 배포 타겟을 가진 Pod들을 16.4로 통일
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
+        # iOS 26 SDK: UIUtilities가 SubFrameworks로 이동
+        paths = config.build_settings['FRAMEWORK_SEARCH_PATHS'] || '$(inherited)'
+        paths = paths.is_a?(Array) ? paths : [paths]
+        sub = '"$(SDKROOT)/System/Library/SubFrameworks"'
+        config.build_settings['FRAMEWORK_SEARCH_PATHS'] = (paths + [sub]).uniq
+        # iOS 26 SDK: prebuilt React.xcframework(릴리스)와 ABI 맞춤
+        # Sealable 심볼 불일치 해결 — 모든 pod에 REACT_NATIVE_PRODUCTION 적용
+        defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || '$(inherited)'
+        defs = defs.is_a?(Array) ? defs : [defs]
+        unless defs.any? { |d| d.include?('REACT_NATIVE_PRODUCTION') }
+          config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs + ['REACT_NATIVE_PRODUCTION=1']
+        end
         current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
         if current && current.to_f < 16.4
           config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.4'
         end
       end
     end
+    installer.pods_project.save
   end
 end

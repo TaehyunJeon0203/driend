@@ -53,6 +53,8 @@
 	<string>지역 사진을 촬영하기 위해 카메라 접근이 필요합니다.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>개발 서버(Metro)에 연결하기 위해 로컬 네트워크 접근이 필요합니다.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>백그라운드에서 주행 경로를 자동으로 기록하기 위해 위치 정보가 필요합니다.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
