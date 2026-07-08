@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
@@ -11,13 +12,14 @@ const FLUSH_THRESHOLD = 10;
 export type Coordinate = { longitude: number; latitude: number };
 
 export const DRIVE_IDLE_CATEGORY = 'DRIVE_IDLE';
-const IDLE_SPEED_THRESHOLD = 1.5;  // m/s ≈ 5 km/h
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;   // 5분 → 알림
-const AUTO_STOP_MS = 10 * 60 * 1000;     // 10분 → 자동 종료
+export const DRIVE_DETECT_CATEGORY = 'DRIVE_DETECT';
+// 주행 감지 알림 켜기/끄기 설정 키 (AsyncStorage)
+export const DRIVE_DETECT_NOTIFICATION_KEY = 'drive_detect_notification_enabled';
 
-// 자동 감지 (13 km/h 이상을 10초 간격으로 1회 감지)
-const AUTO_START_SPEED_MS = 13 / 3.6;
-const AUTO_START_CONFIRM_COUNT = 1;
+const IDLE_SPEED_THRESHOLD = 1.5;    // m/s (≈5 km/h)
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;  // 10분 → 정차 알림
+const AUTO_STOP_MS = 12 * 60 * 1000;     // 12분 → 자동 종료
+const DETECT_SPEED_MPS = 13 / 3.6;       // 주행 감지 기준 속도
 
 // 주행 상태
 let driveId: string | null = null;
@@ -36,8 +38,9 @@ let idleNotificationSent = false;
 // 최고 속도 (m/s)
 let maxSpeedMs = 0;
 
-// 자동 감지
-let drivingFastCount = 0;
+// 0-100 km/h 측정용 속도 샘플
+type SpeedSample = { speed: number; ts: number };
+let speedSamples: SpeedSample[] = [];
 
 // 여행 모드
 let activeTripId: string | null = null;
@@ -64,27 +67,59 @@ export function resetIdleTimer(): void {
   idleNotificationSent = false;
 }
 
-// 저전력 자동 감지 태스크
+// 속도 샘플에서 0→100 km/h 최소 시간 계산 (선형 보간으로 소수점 정밀도)
+function findZeroToHundred(samples: SpeedSample[]): number | null {
+  const TARGET = 100 / 3.6;  // 27.78 m/s
+  const START_MAX = 5 / 3.6; // 출발 조건: 5 km/h 미만
+  let best: number | null = null;
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    if (samples[i].speed > START_MAX) continue;
+
+    for (let j = i + 1; j < samples.length; j++) {
+      if (samples[j].speed >= TARGET) {
+        const s0 = samples[j - 1];
+        const s1 = samples[j];
+        const t = (TARGET - s0.speed) / (s1.speed - s0.speed);
+        const crossMs = s0.ts + t * (s1.ts - s0.ts);
+        const elapsed = (crossMs - samples[i].ts) / 1000;
+        if (best === null || elapsed < best) best = elapsed;
+        break;
+      }
+      // 속도가 다시 출발 기준 아래로 떨어지면 해당 구간 포기
+      if (j > i + 1 && samples[j].speed < START_MAX) break;
+    }
+  }
+  return best ? Math.round(best * 10) / 10 : null; // 소수점 1자리
+}
+
+// 주행 감지 태스크 (알림 전송용 — 자동 시작 아님)
 TaskManager.defineTask(MONITOR_TASK, async ({ data, error }: TaskManager.TaskManagerTaskBody<{ locations: Location.LocationObject[] }>) => {
-  if (error || !data?.locations?.length) return;
-  if (isTracking()) { drivingFastCount = 0; return; }
+  if (error || !data?.locations?.length || isTracking()) return;
 
   const loc = data.locations[data.locations.length - 1];
   const speed = loc.coords.speed ?? -1;
   const accuracy = loc.coords.accuracy ?? 999;
 
-  if (speed >= AUTO_START_SPEED_MS && accuracy < 60) {
-    drivingFastCount++;
-    if (drivingFastCount >= AUTO_START_CONFIRM_COUNT) {
-      drivingFastCount = 0;
-      await startTracking();
-    }
-  } else {
-    drivingFastCount = 0;
-  }
+  if (speed < DETECT_SPEED_MPS || accuracy >= 60) return;
+
+  const enabled = await AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY);
+  if (enabled !== 'true') return;
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '주행 중인 것 같아요',
+      body: '기록을 시작할까요?',
+      categoryIdentifier: DRIVE_DETECT_CATEGORY,
+    },
+    trigger: null,
+  });
+
+  // 중복 알림 방지: 알림 발송 후 MONITOR_TASK 중지 (stopTracking 시 재시작됨)
+  await Location.stopLocationUpdatesAsync(MONITOR_TASK);
 });
 
-// 고정밀 추적 태스크
+// 고정밀 주행 추적 태스크
 TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskManagerTaskBody<{ locations: Location.LocationObject[] }>) => {
   if (error) {
     console.error('[Tracker] background task error:', error.message);
@@ -110,27 +145,32 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
 
     const speed = loc.coords.speed ?? -1;
     if (speed > maxSpeedMs) maxSpeedMs = speed;
-    if (speed >= 0 && speed > IDLE_SPEED_THRESHOLD) {
-      lastMovingTimestamp = now;
-      if (idleNotificationSent) {
-        idleNotificationSent = false;
-        Notifications.dismissAllNotificationsAsync();
-      }
-    } else if (speed >= 0 && lastMovingTimestamp) {
-      const idleDuration = now - lastMovingTimestamp;
-      if (idleDuration >= AUTO_STOP_MS) {
-        await stopTracking();
-        return;
-      } else if (!idleNotificationSent && idleDuration >= IDLE_TIMEOUT_MS) {
-        idleNotificationSent = true;
-        Notifications.scheduleNotificationAsync({
-          content: {
-            title: '주행이 종료되었나요?',
-            body: '5분 이상 정차 중입니다. 주행을 종료할까요?',
-            categoryIdentifier: DRIVE_IDLE_CATEGORY,
-          },
-          trigger: null,
-        });
+
+    if (speed >= 0) {
+      speedSamples.push({ speed, ts: now });
+
+      if (speed > IDLE_SPEED_THRESHOLD) {
+        lastMovingTimestamp = now;
+        if (idleNotificationSent) {
+          idleNotificationSent = false;
+          Notifications.dismissAllNotificationsAsync();
+        }
+      } else if (lastMovingTimestamp) {
+        const idleDuration = now - lastMovingTimestamp;
+        if (idleDuration >= AUTO_STOP_MS) {
+          await stopTracking();
+          return;
+        } else if (!idleNotificationSent && idleDuration >= IDLE_TIMEOUT_MS) {
+          idleNotificationSent = true;
+          Notifications.scheduleNotificationAsync({
+            content: {
+              title: '주행이 종료되었나요?',
+              body: '10분 이상 정차 중입니다. 주행을 종료할까요?',
+              categoryIdentifier: DRIVE_IDLE_CATEGORY,
+            },
+            trigger: null,
+          });
+        }
       }
     }
   }
@@ -158,7 +198,6 @@ const REGION_TO_KO: Record<string, string> = {
   'Jeju-do': '제주특별자치도',
 };
 
-// 한국어 지역명 → 영문 province 코드 (iOS 한국어 로케일 대응)
 const KO_TO_PROVINCE_CODE: Record<string, string> = {
   '서울특별시': 'Seoul', '부산광역시': 'Busan', '대구광역시': 'Daegu',
   '인천광역시': 'Incheon', '광주광역시': 'Gwangju', '대전광역시': 'Daejeon',
@@ -188,7 +227,6 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
       const [geo] = await Location.reverseGeocodeAsync(coord);
       const rawRegion = geo.region ?? null;
       if (!rawRegion) continue;
-      // iOS 한국어 로케일은 "경기도" 반환, 영어 로케일은 "Gyeonggi-do" 반환 → 통일
       const code = KO_TO_PROVINCE_CODE[rawRegion] ?? rawRegion;
       if (seenCodes.has(code)) continue;
       seenCodes.add(code);
@@ -211,22 +249,17 @@ function resetDriveState() {
   lastMovingTimestamp = null;
   idleNotificationSent = false;
   maxSpeedMs = 0;
+  speedSamples = [];
 }
 
 export function isTracking(): boolean {
   return driveId !== null;
 }
 
-async function stopMonitoring(): Promise<void> {
-  const isRunning = await Location.hasStartedLocationUpdatesAsync(MONITOR_TASK);
-  if (isRunning) await Location.stopLocationUpdatesAsync(MONITOR_TASK);
-}
-
 export async function startMonitoring(): Promise<void> {
   const { status } = await Location.getBackgroundPermissionsAsync();
   if (status !== 'granted') return;
 
-  drivingFastCount = 0;
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(MONITOR_TASK);
   if (alreadyRunning) return;
 
@@ -278,15 +311,17 @@ export async function startTracking(): Promise<boolean> {
   driveId = drive.id;
   resetDriveState();
 
-  await stopMonitoring();
+  // MONITOR_TASK 중지 (주행 중엔 감지 불필요)
+  const monitorRunning = await Location.hasStartedLocationUpdatesAsync(MONITOR_TASK);
+  if (monitorRunning) await Location.stopLocationUpdatesAsync(MONITOR_TASK);
 
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (alreadyRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
-    distanceInterval: 10,
-    timeInterval: 3000,
+    distanceInterval: 0,
+    timeInterval: 1000,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
       notificationTitle: 'Driend 주행 중',
@@ -308,6 +343,7 @@ export async function stopTracking(): Promise<string | null> {
   if (!driveId) return null;
 
   const distanceKm = runningDistanceKm;
+  const zeroToHundred = findZeroToHundred(speedSamples);
   const sampleCoords = [firstCoord, midCoord, prevCoord].filter(Boolean) as Coordinate[];
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -333,6 +369,7 @@ export async function stopTracking(): Promise<string | null> {
       max_speed_kmh: maxSpeedMs * 3.6,
       start_address: startAddress,
       end_address: endAddress,
+      zero_to_hundred_s: zeroToHundred,
     })
     .eq('id', driveId);
 
@@ -348,7 +385,6 @@ export async function stopTracking(): Promise<string | null> {
 
   await startMonitoring();
 
-  // 주행 종료 후 비동기로 맵 매칭 처리
   if (id) processMatchAsync(id).catch(() => {});
 
   return id;

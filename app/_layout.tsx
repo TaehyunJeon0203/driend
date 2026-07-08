@@ -7,7 +7,8 @@ import { initializeKakaoSDK } from '@react-native-kakao/core';
 import { supabase } from '../src/services/supabase';
 import {
   startTracking, stopTracking, isTracking,
-  cleanupOrphanedDrives, resetIdleTimer, startMonitoring, DRIVE_IDLE_CATEGORY, setActiveTripId,
+  cleanupOrphanedDrives, resetIdleTimer, startMonitoring,
+  DRIVE_IDLE_CATEGORY, DRIVE_DETECT_CATEGORY, setActiveTripId,
 } from '../src/services/locationTracker';
 
 // 포그라운드에서도 알림 표시
@@ -47,6 +48,10 @@ export default function RootLayout() {
       { identifier: 'STOP_DRIVE', buttonTitle: '주행 종료', options: { isDestructive: true } },
       { identifier: 'CONTINUE_DRIVE', buttonTitle: '계속 주행' },
     ]);
+    Notifications.setNotificationCategoryAsync(DRIVE_DETECT_CATEGORY, [
+      { identifier: 'START_DRIVE', buttonTitle: '기록 시작' },
+      { identifier: 'DISMISS_DETECT', buttonTitle: '무시', options: { isDestructive: false } },
+    ]);
 
     // 알림 액션 응답 처리
     const notifSub = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -56,6 +61,9 @@ export default function RootLayout() {
         router.replace('/(tabs)');
       } else if (actionIdentifier === 'CONTINUE_DRIVE') {
         resetIdleTimer();
+      } else if (actionIdentifier === 'START_DRIVE') {
+        if (!isTracking()) startTracking();
+        router.replace('/(tabs)');
       }
     });
 
