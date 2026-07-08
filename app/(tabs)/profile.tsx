@@ -1,10 +1,14 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator, Platform,
+  StyleSheet, Alert, ActivityIndicator, Platform, Switch,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../src/services/supabase';
+import {
+  DRIVE_DETECT_NOTIFICATION_KEY, startMonitoring,
+} from '../../src/services/locationTracker';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Profile = { id: string; username: string };
@@ -19,6 +23,7 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isKakaoUser, setIsKakaoUser] = useState(false);
+  const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -28,6 +33,9 @@ export default function ProfileScreen() {
       supabase.from('profiles').select('id, username').eq('id', user.id).single(),
       supabase.from('vehicles').select('id, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
     ]);
+
+    const detectVal = await AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY);
+    setDriveDetectEnabled(detectVal === 'true');
 
     setIsKakaoUser(!!user.user_metadata?.kakao_id);
     if (profileRes.data) setProfile(profileRes.data);
@@ -82,6 +90,12 @@ export default function ProfileScreen() {
       setEditingVehicle(false);
     }
     setSaving(false);
+  };
+
+  const toggleDriveDetect = async (value: boolean) => {
+    setDriveDetectEnabled(value);
+    await AsyncStorage.setItem(DRIVE_DETECT_NOTIFICATION_KEY, value ? 'true' : 'false');
+    if (value) startMonitoring();
   };
 
   const handleLogout = () => {
@@ -174,17 +188,25 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* 자동 주행 감지 */}
+      {/* 주행 감지 알림 */}
       <View style={s.card}>
-        <Text style={s.cardTitle}>자동 주행 감지</Text>
-        <Text style={s.guideDesc}>
-          별도 설정 없이 자동으로 주행을 감지합니다.{'\n'}
-          위치 권한을 "항상 허용"으로 설정해야 백그라운드에서 동작합니다.
-        </Text>
-        <View style={s.autoInfoList}>
-          <Text style={s.autoInfoItem}>▶ 시작: 25km/h 이상으로 30초 이상 주행</Text>
-          <Text style={s.autoInfoItem}>⏹ 종료: 5분 정차 시 알림 → 10분 시 자동 종료</Text>
+        <View style={s.cardHeader}>
+          <Text style={s.cardTitle}>주행 감지 알림</Text>
+          <Switch
+            value={driveDetectEnabled}
+            onValueChange={toggleDriveDetect}
+            trackColor={{ false: colors.textTertiary, true: colors.primary }}
+            thumbColor="#fff"
+          />
         </View>
+        <Text style={s.guideDesc}>
+          주행 중인 것 같을 때 알림을 보내드려요. 알림을 탭하면 바로 기록을 시작할 수 있어요.
+        </Text>
+        {driveDetectEnabled && (
+          <Text style={s.fieldHint}>
+            위치 권한을 "항상 허용"으로 설정해야 백그라운드에서 동작합니다.
+          </Text>
+        )}
       </View>
 
       {/* 로그아웃 */}
