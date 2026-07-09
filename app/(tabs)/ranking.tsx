@@ -9,14 +9,15 @@ import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Tab = 'global' | 'friends';
 
-type Category = { key: string; label: string; unit: string; isCount?: boolean };
+type Category = { key: string; label: string; unit: string; isCount?: boolean; asc?: boolean };
 const CATEGORIES: Category[] = [
-  { key: 'total_distance',   label: '누적 거리',   unit: 'km' },
-  { key: 'monthly_distance', label: '이번 달',     unit: 'km' },
-  { key: 'total_drives',     label: '총 주행 수',  unit: '회', isCount: true },
-  { key: 'visited_cities',   label: '방문 도시',   unit: '곳', isCount: true },
-  { key: 'longest_drive',    label: '최장 주행',   unit: 'km' },
-  { key: 'avg_distance',     label: '평균 거리',   unit: 'km' },
+  { key: 'total_distance',   label: '누적 거리',     unit: 'km' },
+  { key: 'monthly_distance', label: '이번 달',       unit: 'km' },
+  { key: 'total_drives',     label: '총 주행 수',    unit: '회', isCount: true },
+  { key: 'visited_cities',   label: '방문 도시',     unit: '곳', isCount: true },
+  { key: 'longest_drive',    label: '최장 주행',     unit: 'km' },
+  { key: 'avg_distance',     label: '평균 거리',     unit: 'km' },
+  { key: 'zero_to_hundred',  label: '베스트 제로백', unit: 's',  asc: true },
 ];
 
 type RankEntry = {

@@ -254,6 +254,21 @@ export default function MapScreen() {
           zhStateRef.current = 'done';
           zhSubRef.current?.remove();
           zhSubRef.current = null;
+          // 베스트 기록 저장
+          supabase.auth.getUser().then(({ data: { user } }) => {
+            if (!user) return;
+            supabase.from('profiles')
+              .select('best_zero_to_hundred_s')
+              .eq('id', user.id)
+              .single()
+              .then(({ data }) => {
+                if (!data?.best_zero_to_hundred_s || elapsed < data.best_zero_to_hundred_s) {
+                  supabase.from('profiles')
+                    .update({ best_zero_to_hundred_s: elapsed })
+                    .eq('id', user.id);
+                }
+              });
+          });
         }
       }
     );

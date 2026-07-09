@@ -36,6 +36,7 @@ function formatDate(iso: string) {
 
 export default function StatsScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [bestZeroHundred, setBestZeroHundred] = useState<number | null>(null);
   const [monthly, setMonthly] = useState<MonthlyData[]>([]);
   const [drives, setDrives] = useState<Drive[]>([]);
   const [cities, setCities] = useState<VisitedCity[]>([]);
@@ -56,7 +57,7 @@ export default function StatsScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes] = await Promise.all([
+      const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes, profileRes] = await Promise.all([
         supabase.rpc('get_my_stats', { p_user_id: user.id }),
         supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
         supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
@@ -65,9 +66,11 @@ export default function StatsScreen() {
           .eq('user_id', user.id)
           .order('first_visited_at', { ascending: false }),
         supabase.rpc('get_my_trips', { p_user_id: user.id }),
+        supabase.from('profiles').select('best_zero_to_hundred_s').eq('id', user.id).single(),
       ]);
 
       if (statsRes.data?.[0]) setStats(statsRes.data[0]);
+      if (profileRes.data?.best_zero_to_hundred_s) setBestZeroHundred(profileRes.data.best_zero_to_hundred_s);
       if (monthlyRes.data) setMonthly(monthlyRes.data);
       if (drivesRes.data) setDrives(drivesRes.data);
       if (citiesRes.data) setCities(citiesRes.data);
@@ -300,6 +303,12 @@ export default function StatsScreen() {
           <Text style={s.statNum}>{Math.round(stats?.max_speed_kmh ?? 0)}</Text>
           <Text style={s.statLabel}>최고 속도 km/h</Text>
         </View>
+        {bestZeroHundred && (
+          <View style={s.statCard}>
+            <Text style={s.statNum}>{bestZeroHundred.toFixed(1)}</Text>
+            <Text style={s.statLabel}>베스트 제로백 s</Text>
+          </View>
+        )}
       </View>
 
       {/* 여행 기록 */}
