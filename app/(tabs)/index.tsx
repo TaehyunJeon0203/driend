@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, StyleSheet, TouchableOpacity, Text, Alert,
-  ActivityIndicator, Image,
+  ActivityIndicator, Image, Modal,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
@@ -42,6 +42,16 @@ export default function MapScreen() {
   const [mapMode, setMapMode] = useState<MapMode>('drive');
   const [visitedCities, setVisitedCities] = useState<VisitedCity[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
+
+  // 제로백 측정
+  type ZHState = 'ready' | 'measuring' | 'done';
+  const [zhVisible, setZhVisible] = useState(false);
+  const [zhState, setZhState] = useState<ZHState>('ready');
+  const [zhSpeed, setZhSpeed] = useState(0);
+  const [zhResult, setZhResult] = useState<number | null>(null);
+  const zhStateRef = useRef<ZHState>('ready');
+  const zhStartRef = useRef<number | null>(null);
+  const zhSubRef = useRef<Location.LocationSubscription | null>(null);
 
   const loadPastRoutes = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -218,6 +228,43 @@ export default function MapScreen() {
     }
   };
 
+  const openZeroHundred = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return;
+    zhStateRef.current = 'ready';
+    zhStartRef.current = null;
+    setZhState('ready');
+    setZhSpeed(0);
+    setZhResult(null);
+    setZhVisible(true);
+    zhSubRef.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 250 },
+      (loc) => {
+        const kmh = Math.max(0, (loc.coords.speed ?? 0) * 3.6);
+        setZhSpeed(Math.round(kmh));
+        if (zhStateRef.current === 'ready' && kmh >= 3) {
+          zhStartRef.current = Date.now();
+          zhStateRef.current = 'measuring';
+          setZhState('measuring');
+        }
+        if (zhStateRef.current === 'measuring' && kmh >= 100 && zhStartRef.current) {
+          const elapsed = Math.round((Date.now() - zhStartRef.current) / 100) / 10;
+          setZhResult(elapsed);
+          setZhState('done');
+          zhStateRef.current = 'done';
+          zhSubRef.current?.remove();
+          zhSubRef.current = null;
+        }
+      }
+    );
+  };
+
+  const closeZeroHundred = () => {
+    zhSubRef.current?.remove();
+    zhSubRef.current = null;
+    setZhVisible(false);
+  };
+
   const toggleTracking = async () => {
     if (toggling) return;
     setToggling(true);
@@ -347,6 +394,10 @@ export default function MapScreen() {
             }
           </TouchableOpacity>
 
+          <TouchableOpacity style={s.zhBtn} onPress={openZeroHundred}>
+            <Text style={s.zhBtnText}>0→100</Text>
+          </TouchableOpacity>
+
           {tracking && (
             <View style={s.recordingBadge}>
               <Text style={s.recordingText}>● 기록 중</Text>
@@ -354,6 +405,33 @@ export default function MapScreen() {
           )}
         </>
       )}
+
+      {/* 제로백 측정 모달 */}
+      <Modal visible={zhVisible} animationType="fade" transparent onRequestClose={closeZeroHundred}>
+        <View style={s.zhOverlay}>
+          <View style={s.zhCard}>
+            <Text style={s.zhStateLabel}>
+              {zhState === 'ready' ? '정지 후 출발하세요' : zhState === 'measuring' ? '측정 중...' : '측정 완료'}
+            </Text>
+
+            {zhState === 'done' ? (
+              <>
+                <Text style={s.zhResultNum}>{zhResult?.toFixed(1)}</Text>
+                <Text style={s.zhResultUnit}>초</Text>
+                <TouchableOpacity style={s.zhRetryBtn} onPress={openZeroHundred}>
+                  <Text style={s.zhRetryText}>다시 측정</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={s.zhSpeedNum}>{zhSpeed}<Text style={s.zhSpeedUnit}> km/h</Text></Text>
+            )}
+
+            <TouchableOpacity style={s.zhCloseBtn} onPress={closeZeroHundred}>
+              <Text style={s.zhCloseText}>닫기</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -414,6 +492,43 @@ const s = StyleSheet.create({
     borderRadius: 20,
   },
   recordingText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+
+  zhBtn: {
+    position: 'absolute',
+    bottom: 48,
+    right: 20,
+    backgroundColor: '#1a1a2e',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  zhBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  zhOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  zhCard: {
+    width: 280, backgroundColor: '#1a1a2e', borderRadius: 24,
+    padding: 32, alignItems: 'center', gap: 8,
+  },
+  zhStateLabel: { fontSize: 15, color: 'rgba(255,255,255,0.6)', marginBottom: 8 },
+  zhSpeedNum: { fontSize: 72, fontWeight: '800', color: '#fff', lineHeight: 80 },
+  zhSpeedUnit: { fontSize: 20, fontWeight: '400', color: 'rgba(255,255,255,0.5)' },
+  zhResultNum: { fontSize: 80, fontWeight: '900', color: '#4ade80', lineHeight: 88 },
+  zhResultUnit: { fontSize: 24, color: 'rgba(255,255,255,0.6)', marginTop: -8 },
+  zhRetryBtn: {
+    marginTop: 16, backgroundColor: colors.primary,
+    paddingHorizontal: 28, paddingVertical: 12, borderRadius: 20,
+  },
+  zhRetryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  zhCloseBtn: { marginTop: 12 },
+  zhCloseText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
 
   markerPhoto: {
     width: 64, height: 64, borderRadius: 32,

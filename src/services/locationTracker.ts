@@ -38,10 +38,6 @@ let idleNotificationSent = false;
 // 최고 속도 (m/s)
 let maxSpeedMs = 0;
 
-// 0-100 km/h 측정용 속도 샘플
-type SpeedSample = { speed: number; ts: number };
-let speedSamples: SpeedSample[] = [];
-
 // 여행 모드
 let activeTripId: string | null = null;
 
@@ -65,32 +61,6 @@ export function addStopListener(cb: () => void): () => void {
 export function resetIdleTimer(): void {
   lastMovingTimestamp = Date.now();
   idleNotificationSent = false;
-}
-
-// 속도 샘플에서 0→100 km/h 최소 시간 계산 (선형 보간으로 소수점 정밀도)
-function findZeroToHundred(samples: SpeedSample[]): number | null {
-  const TARGET = 100 / 3.6;  // 27.78 m/s
-  const START_MAX = 5 / 3.6; // 출발 조건: 5 km/h 미만
-  let best: number | null = null;
-
-  for (let i = 0; i < samples.length - 1; i++) {
-    if (samples[i].speed > START_MAX) continue;
-
-    for (let j = i + 1; j < samples.length; j++) {
-      if (samples[j].speed >= TARGET) {
-        const s0 = samples[j - 1];
-        const s1 = samples[j];
-        const t = (TARGET - s0.speed) / (s1.speed - s0.speed);
-        const crossMs = s0.ts + t * (s1.ts - s0.ts);
-        const elapsed = (crossMs - samples[i].ts) / 1000;
-        if (best === null || elapsed < best) best = elapsed;
-        break;
-      }
-      // 속도가 다시 출발 기준 아래로 떨어지면 해당 구간 포기
-      if (j > i + 1 && samples[j].speed < START_MAX) break;
-    }
-  }
-  return best ? Math.round(best * 10) / 10 : null; // 소수점 1자리
 }
 
 // 주행 감지 태스크 (알림 전송용 — 자동 시작 아님)
@@ -147,8 +117,6 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     if (speed > maxSpeedMs) maxSpeedMs = speed;
 
     if (speed >= 0) {
-      speedSamples.push({ speed, ts: now });
-
       if (speed > IDLE_SPEED_THRESHOLD) {
         lastMovingTimestamp = now;
         if (idleNotificationSent) {
@@ -249,7 +217,6 @@ function resetDriveState() {
   lastMovingTimestamp = null;
   idleNotificationSent = false;
   maxSpeedMs = 0;
-  speedSamples = [];
 }
 
 export function isTracking(): boolean {
@@ -320,8 +287,8 @@ export async function startTracking(): Promise<boolean> {
 
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
-    distanceInterval: 0,
-    timeInterval: 1000,
+    distanceInterval: 10,
+    timeInterval: 3000,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
       notificationTitle: 'Driend 주행 중',
@@ -343,7 +310,6 @@ export async function stopTracking(): Promise<string | null> {
   if (!driveId) return null;
 
   const distanceKm = runningDistanceKm;
-  const zeroToHundred = findZeroToHundred(speedSamples);
   const sampleCoords = [firstCoord, midCoord, prevCoord].filter(Boolean) as Coordinate[];
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -369,7 +335,6 @@ export async function stopTracking(): Promise<string | null> {
       max_speed_kmh: maxSpeedMs * 3.6,
       start_address: startAddress,
       end_address: endAddress,
-      zero_to_hundred_s: zeroToHundred,
     })
     .eq('id', driveId);
 
