@@ -12,7 +12,7 @@ import { colors, spacing, radius, typography } from '../../src/theme';
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
 type MonthlyData = { month: string; distance_km: number };
 type Trip = { id: string; name: string; started_at: string; ended_at: string | null; total_distance_km: number; total_drives: number };
-type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null };
+type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null; zero_to_hundred_s: number | null };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 
 const BAR_MAX_H = 72;
@@ -446,6 +446,9 @@ export default function StatsScreen() {
                   {d.max_speed_kmh ? (
                     <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
                   ) : null}
+                  {d.zero_to_hundred_s ? (
+                    <Text style={s.driveZeroHundred}>0→100 {d.zero_to_hundred_s}s</Text>
+                  ) : null}
                 </View>
               </View>
               <TouchableOpacity onPress={() => confirmDelete(d)} hitSlop={8}>
@@ -547,6 +550,7 @@ const s = StyleSheet.create({
   driveDur: { flex: 1, ...typography.body, color: colors.textSecondary },
   driveKm: { fontSize: 15, fontWeight: '600', color: colors.primary },
   driveSpeed: { fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
+  driveZeroHundred: { fontSize: 12, color: colors.primary, fontWeight: '600' },
   driveDelete: { fontSize: 14, color: colors.textTertiary, paddingLeft: 8 },
   driveMain: { flex: 1, gap: 2 },
   driveRoute: { fontSize: 13, fontWeight: '600', color: colors.text },
