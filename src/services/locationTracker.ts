@@ -4,6 +4,11 @@ import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
 import { processMatchAsync } from './mapMatcher';
+import { pointInPolygons, dedupeByGrid } from './geo';
+import CITY_DATA from '../../assets/korea-cities.json';
+
+type City = { code: string; name: string; province_code: string; center: Coordinate; polygons: Coordinate[][] };
+const CITIES = CITY_DATA as City[];
 
 const LOCATION_TASK = 'driend-location-task';
 const MONITOR_TASK = 'driend-monitor-task';
@@ -24,6 +29,7 @@ const DETECT_SPEED_MPS = 13 / 3.6;       // 주행 감지 기준 속도
 // 주행 상태
 let driveId: string | null = null;
 const buffer: Coordinate[] = [];
+const driveCoords: Coordinate[] = [];
 
 let runningDistanceKm = 0;
 let prevCoord: Coordinate | null = null;
@@ -111,6 +117,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     if (coordCount % 30 === 0) midCoord = coord;
 
     buffer.push(coord);
+    driveCoords.push(coord);
     pointListeners.forEach((cb) => cb(coord));
 
     const speed = loc.coords.speed ?? -1;
@@ -166,17 +173,6 @@ const REGION_TO_KO: Record<string, string> = {
   'Jeju-do': '제주특별자치도',
 };
 
-const KO_TO_PROVINCE_CODE: Record<string, string> = {
-  '서울특별시': 'Seoul', '부산광역시': 'Busan', '대구광역시': 'Daegu',
-  '인천광역시': 'Incheon', '광주광역시': 'Gwangju', '대전광역시': 'Daejeon',
-  '울산광역시': 'Ulsan', '세종특별자치시': 'Sejongsi', '경기도': 'Gyeonggi-do',
-  '강원특별자치도': 'Gangwon-do', '강원도': 'Gangwon-do',
-  '충청북도': 'Chungcheongbuk-do', '충청남도': 'Chungcheongnam-do',
-  '전북특별자치도': 'Jeollabuk-do', '전라북도': 'Jeollabuk-do',
-  '전라남도': 'Jeollanam-do', '경상북도': 'Gyeongsangbuk-do',
-  '경상남도': 'Gyeongsangnam-do', '제주특별자치도': 'Jeju-do',
-};
-
 function haversineKm(a: Coordinate, b: Coordinate): number {
   const R = 6371;
   const dLat = (b.latitude - a.latitude) * (Math.PI / 180);
@@ -189,22 +185,26 @@ function haversineKm(a: Coordinate, b: Coordinate): number {
 }
 
 async function recordVisitedCities(userId: string, coords: Coordinate[]) {
-  const seenCodes = new Set<string>();
-  for (const coord of coords) {
-    try {
-      const [geo] = await Location.reverseGeocodeAsync(coord);
-      const rawRegion = geo.region ?? null;
-      if (!rawRegion) continue;
-      const code = KO_TO_PROVINCE_CODE[rawRegion] ?? rawRegion;
-      if (seenCodes.has(code)) continue;
-      seenCodes.add(code);
-      const name = geo.city ?? REGION_TO_KO[code] ?? rawRegion;
-      await supabase.from('visited_cities').upsert(
-        { user_id: userId, city_code: code, city_name: name, first_visited_at: new Date().toISOString() },
-        { onConflict: 'user_id,city_code', ignoreDuplicates: true }
-      );
-    } catch {}
+  const points = dedupeByGrid(coords);
+  const matched = new Map<string, string>(); // code -> name
+
+  for (const pt of points) {
+    for (const city of CITIES) {
+      if (pointInPolygons(pt, city.polygons)) {
+        matched.set(city.code, city.name);
+        break;
+      }
+    }
   }
+  if (!matched.size) return;
+
+  const rows = Array.from(matched, ([city_code, city_name]) => ({
+    user_id: userId,
+    city_code,
+    city_name,
+    first_visited_at: new Date().toISOString(),
+  }));
+  await supabase.from('visited_cities').upsert(rows, { onConflict: 'user_id,city_code', ignoreDuplicates: true });
 }
 
 function resetDriveState() {
@@ -214,6 +214,7 @@ function resetDriveState() {
   midCoord = null;
   coordCount = 0;
   buffer.length = 0;
+  driveCoords.length = 0;
   lastMovingTimestamp = null;
   idleNotificationSent = false;
   maxSpeedMs = 0;
@@ -310,7 +311,7 @@ export async function stopTracking(): Promise<string | null> {
   if (!driveId) return null;
 
   const distanceKm = runningDistanceKm;
-  const sampleCoords = [firstCoord, midCoord, prevCoord].filter(Boolean) as Coordinate[];
+  const sampleCoords = driveCoords.slice();
 
   const { data: { user } } = await supabase.auth.getUser();
 

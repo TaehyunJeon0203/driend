@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, StyleSheet, TouchableOpacity, Text, Alert,
-  ActivityIndicator, Image, Modal,
+  ActivityIndicator, Modal,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
+import { Accelerometer } from 'expo-sensors';
 import {
   NaverMapView,
   NaverMapPathOverlay,
   NaverMapPolygonOverlay,
-  NaverMapMarkerOverlay,
+  NaverMapGroundOverlay,
   type NaverMapViewRef,
 } from '@mj-studio/react-native-naver-map';
 import { supabase } from '../../src/services/supabase';
@@ -18,21 +18,48 @@ import {
   startTracking, stopTracking, isTracking,
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
+import { pointInPolygons, dedupeByGrid } from '../../src/services/geo';
 import { colors } from '../../src/theme';
 import PROVINCE_DATA from '../../assets/korea-provinces.json';
+import CITY_DATA from '../../assets/korea-cities.json';
 
 type MapMode = 'drive' | 'photo';
 type RouteLine = { drive_id: string; coordinates: [number, number][] };
 type LatLng = { latitude: number; longitude: number };
 type VisitedCity = { city_code: string; city_name: string; photo_url: string | null };
 type Province = { code: string; name: string; center: LatLng; polygons: LatLng[][] };
+type City = { code: string; name: string; province_code: string; center: LatLng; polygons: LatLng[][] };
 
 const PROVINCES = PROVINCE_DATA as Province[];
+const CITIES = CITY_DATA as City[];
+
+type Region = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
+const CITY_REGION_MAP = new Map<string, Region>(
+  CITIES.map((c) => {
+    const all = c.polygons.flat();
+    const lats = all.map((p) => p.latitude);
+    const lngs = all.map((p) => p.longitude);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+    return [c.code, { latitude: minLat, longitude: minLng, latitudeDelta: maxLat - minLat, longitudeDelta: maxLng - minLng }];
+  })
+);
+
+const PROVINCE_COLORS = [
+  '#F87171', '#FB923C', '#FBBF24', '#A3E635', '#34D399', '#2DD4BF',
+  '#22D3EE', '#38BDF8', '#60A5FA', '#818CF8', '#A78BFA', '#C084FC',
+  '#E879F9', '#F472B6', '#FB7185', '#FDE68A', '#86EFAC',
+];
+const PROVINCE_COLOR_MAP = new Map(
+  PROVINCES.map((p, i) => [p.code, PROVINCE_COLORS[i % PROVINCE_COLORS.length]])
+);
+const PHOTO_MAP_BG = '#122238';
 
 export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
   const isFirstPoint = useRef(true);
   const hasCenteredOnUser = useRef(false);
+  const cityBackfillDone = useRef(false);
   const [tracking, setTracking] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
@@ -41,7 +68,6 @@ export default function MapScreen() {
 
   const [mapMode, setMapMode] = useState<MapMode>('drive');
   const [visitedCities, setVisitedCities] = useState<VisitedCity[]>([]);
-  const [uploading, setUploading] = useState<string | null>(null);
 
   // 제로백 측정
   type ZHState = 'ready' | 'measuring' | 'done';
@@ -49,9 +75,13 @@ export default function MapScreen() {
   const [zhState, setZhState] = useState<ZHState>('ready');
   const [zhSpeed, setZhSpeed] = useState(0);
   const [zhResult, setZhResult] = useState<number | null>(null);
+  const [zhTimer, setZhTimer] = useState(0);
+  const [zhGpsInterval, setZhGpsInterval] = useState<number | null>(null);
   const zhStateRef = useRef<ZHState>('ready');
   const zhStartRef = useRef<number | null>(null);
   const zhSubRef = useRef<Location.LocationSubscription | null>(null);
+  const accelSubRef = useRef<{ remove: () => void } | null>(null);
+  const zhTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadPastRoutes = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -88,6 +118,9 @@ export default function MapScreen() {
       if (isFirstPoint.current) {
         isFirstPoint.current = false;
         mapRef.current?.animateCameraTo({ latitude: coord.latitude, longitude: coord.longitude, zoom: 15, duration: 600 });
+      } else if (isTracking()) {
+        // 주행 중에는 지도가 내 위치를 계속 따라가도록 (줌 레벨은 유지)
+        mapRef.current?.animateCameraTo({ latitude: coord.latitude, longitude: coord.longitude, duration: 500 });
       }
     });
 
@@ -168,113 +201,170 @@ export default function MapScreen() {
     return segments;
   }, [pastLines]);
 
-  const visitedProvinces = useMemo(() => {
+  const citiesWithMeta = useMemo(() => {
     const cityMap = new Map(visitedCities.map((c) => [c.city_code, c]));
-    return PROVINCES
-      .filter((p) => cityMap.has(p.code))
-      .map((p) => ({ ...p, photoUrl: cityMap.get(p.code)?.photo_url ?? null }));
+    return CITIES.map((c) => ({
+      ...c,
+      color: PROVINCE_COLOR_MAP.get(c.province_code) ?? '#94A3B8',
+      visited: cityMap.has(c.code),
+      photoUrl: cityMap.get(c.code)?.photo_url ?? null,
+    }));
   }, [visitedCities]);
 
-  const pickProvincePhoto = async (province: Province & { photoUrl: string | null }) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('권한 필요', '사진 라이브러리 접근 권한이 필요해요.');
-      return;
+  // 사진 모드 진입 시 한반도 전체가 보이도록 줌아웃
+  useEffect(() => {
+    if (mapMode === 'photo') {
+      mapRef.current?.animateCameraTo({ latitude: 36.4, longitude: 127.8, zoom: 6.3, duration: 500 });
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (result.canceled) return;
+  }, [mapMode]);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+  // 방문 기록을 현재 시/군/구 데이터셋 기준으로 재계산 (세션당 1회, 데이터셋이 바뀌어도 항상 재확인)
+  useEffect(() => {
+    if (mapMode !== 'photo') return;
+    if (!pastLines.length) return;
+    if (cityBackfillDone.current) return;
+    cityBackfillDone.current = true;
 
-    setUploading(province.code);
-    try {
-      const asset = result.assets[0];
-      const ext = asset.uri.split('.').pop() ?? 'jpg';
-      const path = `${user.id}/${province.code}.${ext}`;
-      const { data: { session } } = await supabase.auth.getSession();
-      const formData = new FormData();
-      formData.append('file', { uri: asset.uri, name: `photo.${ext}`, type: `image/${ext}` } as any);
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
-        xhr.setRequestHeader('Authorization', `Bearer ${session!.access_token}`);
-        xhr.setRequestHeader('x-upsert', 'true');
-        xhr.onload = () => {
-          if (xhr.status < 300) resolve();
-          else { try { reject(new Error(JSON.parse(xhr.responseText).message)); } catch { reject(new Error('업로드 실패')); } }
-        };
-        xhr.onerror = () => reject(new Error('네트워크 오류'));
-        xhr.send(formData);
-      });
-
-      const { data: { publicUrl } } = supabase.storage.from('city-photos').getPublicUrl(path);
-      await supabase.from('visited_cities')
-        .update({ photo_url: publicUrl })
-        .eq('user_id', user.id)
-        .eq('city_code', province.code);
-      setVisitedCities((prev) =>
-        prev.map((c) => c.city_code === province.code ? { ...c, photo_url: publicUrl } : c)
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const allCoords = pastLines.flatMap((l) =>
+        (l.coordinates ?? []).map(([lng, lat]) => ({ latitude: lat, longitude: lng }))
       );
-    } catch (e: any) {
-      Alert.alert('업로드 실패', e.message ?? String(e));
-    } finally {
-      setUploading(null);
-    }
-  };
+      const points = dedupeByGrid(allCoords);
+      const matched = new Map<string, string>();
+      for (const pt of points) {
+        for (const city of CITIES) {
+          if (pointInPolygons(pt, city.polygons)) {
+            matched.set(city.code, city.name);
+            break;
+          }
+        }
+      }
+      if (!matched.size) return;
+      const rows = Array.from(matched, ([city_code, city_name]) => ({
+        user_id: user.id, city_code, city_name, first_visited_at: new Date().toISOString(),
+      }));
+      await supabase.from('visited_cities').upsert(rows, { onConflict: 'user_id,city_code', ignoreDuplicates: true });
+      loadVisitedCities();
+    })();
+  }, [mapMode, pastLines, loadVisitedCities]);
 
   const openZeroHundred = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
     zhStateRef.current = 'ready';
     zhStartRef.current = null;
+    if (zhTimerRef.current) { clearInterval(zhTimerRef.current); zhTimerRef.current = null; }
     setZhState('ready');
     setZhSpeed(0);
+    setZhTimer(0);
+    setZhGpsInterval(null);
     setZhResult(null);
     setZhVisible(true);
-    zhSubRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 250 },
-      (loc) => {
-        const kmh = Math.max(0, (loc.coords.speed ?? 0) * 3.6);
-        setZhSpeed(Math.round(kmh));
-        if (zhStateRef.current === 'ready' && kmh >= 3) {
+
+    // 가속도계 baseline (EMA)
+    let base: { x: number; y: number; z: number } | null = null;
+    let accelHits = 0;
+
+    // 50Hz 가속도계로 출발 순간 정밀 감지
+    Accelerometer.setUpdateInterval(20);
+    accelSubRef.current = Accelerometer.addListener(({ x, y, z }) => {
+      if (zhStateRef.current !== 'ready') return;
+      if (!base) { base = { x, y, z }; return; }
+
+      const deviation = Math.sqrt((x - base.x) ** 2 + (y - base.y) ** 2 + (z - base.z) ** 2);
+      if (deviation < 0.25) {
+        base.x = base.x * 0.9 + x * 0.1;
+        base.y = base.y * 0.9 + y * 0.1;
+        base.z = base.z * 0.9 + z * 0.1;
+        accelHits = 0;
+      } else {
+        accelHits++;
+        if (accelHits >= 2) {
+          // 2회 연속 임계값 초과 → 출발 감지, T=0 기록
           zhStartRef.current = Date.now();
           zhStateRef.current = 'measuring';
           setZhState('measuring');
+          accelSubRef.current?.remove();
+          accelSubRef.current = null;
+          // 실시간 타이머 시작 (50ms 간격)
+          zhTimerRef.current = setInterval(() => {
+            if (zhStartRef.current) setZhTimer(Date.now() - zhStartRef.current);
+          }, 50);
         }
+      }
+    });
+
+    // GPS: 속도 표시 + 100km/h 도달 감지
+    let prevKmh = 0;
+    let prevTs = 0;
+    let lastGpsCbTs = 0;
+    const gpsHistory: { ts: number; kmh: number }[] = [];
+
+    zhSubRef.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 0 },
+      (loc) => {
+        const cbNow = Date.now();
+        if (lastGpsCbTs > 0) setZhGpsInterval(cbNow - lastGpsCbTs);
+        lastGpsCbTs = cbNow;
+
+        const kmh = Math.max(0, (loc.coords.speed ?? 0) * 3.6);
+        const ts = loc.timestamp;
+
+        setZhSpeed(Math.round(kmh));
+
+        // 측정 중 GPS 샘플 기록 (이전 가속 비율 계산용)
+        if (zhStateRef.current === 'measuring' && kmh > 0) {
+          gpsHistory.push({ ts, kmh });
+        }
+
         if (zhStateRef.current === 'measuring' && kmh >= 100 && zhStartRef.current) {
-          const elapsed = Math.round((Date.now() - zhStartRef.current) / 100) / 10;
+          if (zhTimerRef.current) { clearInterval(zhTimerRef.current); zhTimerRef.current = null; }
+
+          // 이전 구간 평균 가속 비율로 100km/h 교차 시점 추정
+          let endTs = ts;
+          if (prevKmh < 100 && prevTs > 0) {
+            const prevSamples = gpsHistory.slice(0, -1);
+            const deltas: number[] = [];
+            for (let i = 1; i < prevSamples.length; i++) {
+              const dKmh = prevSamples[i].kmh - prevSamples[i - 1].kmh;
+              const dTs = prevSamples[i].ts - prevSamples[i - 1].ts;
+              if (dTs > 0 && dKmh > 0 && prevSamples[i - 1].kmh > 5) {
+                deltas.push(dKmh / dTs); // km/h per ms
+              }
+            }
+            const avgRate = deltas.length >= 2
+              ? deltas.reduce((a, b) => a + b, 0) / deltas.length
+              : (kmh - prevKmh) / (ts - prevTs); // fallback: linear
+            endTs = prevTs + (100 - prevKmh) / avgRate;
+          }
+
+          const elapsed = Math.round((endTs - zhStartRef.current) / 100) / 10;
           setZhResult(elapsed);
           setZhState('done');
           zhStateRef.current = 'done';
           zhSubRef.current?.remove();
           zhSubRef.current = null;
-          // 베스트 기록 저장
-          supabase.auth.getUser().then(({ data: { user } }) => {
-            if (!user) return;
-            supabase.from('profiles')
-              .select('best_zero_to_hundred_s')
-              .eq('id', user.id)
-              .single()
-              .then(({ data }) => {
-                if (!data?.best_zero_to_hundred_s || elapsed < data.best_zero_to_hundred_s) {
-                  supabase.from('profiles')
-                    .update({ best_zero_to_hundred_s: elapsed })
-                    .eq('id', user.id);
-                }
-              });
-          });
+          if (elapsed > 0 && elapsed < 60 && isFinite(elapsed)) {
+            supabase.auth.getSession().then(async ({ data: { session } }) => {
+              if (!session?.user) return;
+              const { error } = await supabase.rpc('save_best_zero_to_hundred', { p_user_id: session.user.id, p_seconds: elapsed });
+              if (error) console.error('save_best_zero_to_hundred failed:', error);
+            });
+          }
         }
+
+        prevKmh = kmh;
+        prevTs = ts;
       }
     );
   };
 
   const closeZeroHundred = () => {
+    if (zhTimerRef.current) { clearInterval(zhTimerRef.current); zhTimerRef.current = null; }
+    accelSubRef.current?.remove();
+    accelSubRef.current = null;
     zhSubRef.current?.remove();
     zhSubRef.current = null;
     setZhVisible(false);
@@ -307,10 +397,11 @@ export default function MapScreen() {
     <View style={s.container}>
       <NaverMapView
         ref={mapRef}
-        style={s.map}
+        style={[s.map, mapMode === 'photo' && s.mapPhotoMode]}
         initialCamera={{ latitude: 36.5, longitude: 127.5, zoom: 6 }}
+        mapType={mapMode === 'photo' ? 'None' : 'Basic'}
         isShowLocationButton={mapMode === 'drive'}
-        isShowCompass
+        isShowCompass={mapMode === 'drive'}
         isExtentBoundedInKorea
         locationOverlay={mapMode === 'drive' && currentPosition ? {
           isVisible: true,
@@ -319,7 +410,7 @@ export default function MapScreen() {
           circleColor: 'rgba(0, 120, 255, 0.08)',
           circleOutlineWidth: 1,
           circleOutlineColor: 'rgba(0, 120, 255, 0.25)',
-        } : undefined}
+        } : { isVisible: false }}
       >
         {mapMode === 'drive' && (
           <>
@@ -343,39 +434,25 @@ export default function MapScreen() {
           </>
         )}
 
-        {mapMode === 'photo' && visitedProvinces.map((p) => (
+        {mapMode === 'photo' && citiesWithMeta.map((c) => (
           <>
-            {p.polygons.map((coords, i) => (
+            {c.polygons.map((coords, i) => (
               <NaverMapPolygonOverlay
-                key={`poly-${p.code}-${i}`}
+                key={`poly-${c.code}-${i}`}
                 coords={coords}
-                color="rgba(4, 120, 87, 0.18)"
-                outlineWidth={1.5}
-                outlineColor={colors.primary}
-                onTap={() => pickProvincePhoto(p)}
+                color={c.visited ? `${c.color}F2` : `${c.color}B3`}
+                outlineWidth={c.visited ? 1.75 : 1}
+                outlineColor={c.visited ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'}
               />
             ))}
-            <NaverMapMarkerOverlay
-              key={`marker-${p.code}`}
-              latitude={p.center.latitude}
-              longitude={p.center.longitude}
-              width={64}
-              height={64}
-              anchor={{ x: 0.5, y: 0.5 }}
-              onTap={() => pickProvincePhoto(p)}
-            >
-              {uploading === p.code ? (
-                <View style={s.markerPlaceholder}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                </View>
-              ) : p.photoUrl ? (
-                <Image source={{ uri: p.photoUrl }} style={s.markerPhoto} />
-              ) : (
-                <View style={s.markerPlaceholder}>
-                  <Text style={s.markerPlus}>+</Text>
-                </View>
-              )}
-            </NaverMapMarkerOverlay>
+            {c.photoUrl && (
+              <NaverMapGroundOverlay
+                key={`photo-${c.code}`}
+                globalZIndex={1}
+                image={{ httpUri: c.photoUrl }}
+                region={CITY_REGION_MAP.get(c.code)!}
+              />
+            )}
           </>
         ))}
       </NaverMapView>
@@ -424,9 +501,9 @@ export default function MapScreen() {
       {/* 제로백 측정 모달 */}
       <Modal visible={zhVisible} animationType="fade" transparent onRequestClose={closeZeroHundred}>
         <View style={s.zhOverlay}>
-          <View style={s.zhCard}>
-            <Text style={s.zhStateLabel}>
-              {zhState === 'ready' ? '정지 후 출발하세요' : zhState === 'measuring' ? '측정 중...' : '측정 완료'}
+          <View style={[s.zhCard, zhState === 'measuring' && s.zhCardMeasuring]}>
+            <Text style={[s.zhStateLabel, zhState === 'measuring' && { color: '#ef4444' }]}>
+              {zhState === 'ready' ? '정지 후 출발하세요' : zhState === 'measuring' ? '측정 중' : '측정 완료'}
             </Text>
 
             {zhState === 'done' ? (
@@ -437,8 +514,18 @@ export default function MapScreen() {
                   <Text style={s.zhRetryText}>다시 측정</Text>
                 </TouchableOpacity>
               </>
+            ) : zhState === 'measuring' ? (
+              <>
+                <Text style={s.zhTimerNum}>{(zhTimer / 1000).toFixed(1)}</Text>
+                <Text style={s.zhTimerUnit}>초</Text>
+                <Text style={s.zhTimerSpeed}>{zhSpeed} km/h</Text>
+              </>
             ) : (
               <Text style={s.zhSpeedNum}>{zhSpeed}<Text style={s.zhSpeedUnit}> km/h</Text></Text>
+            )}
+
+            {zhGpsInterval && (
+              <Text style={s.zhDebug}>GPS {zhGpsInterval}ms · {(1000 / zhGpsInterval).toFixed(1)}Hz</Text>
             )}
 
             <TouchableOpacity style={s.zhCloseBtn} onPress={closeZeroHundred}>
@@ -454,6 +541,7 @@ export default function MapScreen() {
 const s = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
+  mapPhotoMode: { backgroundColor: PHOTO_MAP_BG },
 
   modeToggle: {
     position: 'absolute',
@@ -535,6 +623,10 @@ const s = StyleSheet.create({
   zhStateLabel: { fontSize: 15, color: 'rgba(255,255,255,0.6)', marginBottom: 8 },
   zhSpeedNum: { fontSize: 72, fontWeight: '800', color: '#fff', lineHeight: 80 },
   zhSpeedUnit: { fontSize: 20, fontWeight: '400', color: 'rgba(255,255,255,0.5)' },
+  zhCardMeasuring: { backgroundColor: '#2d0808', borderWidth: 2, borderColor: '#ef4444' },
+  zhTimerNum: { fontSize: 80, fontWeight: '900', color: '#ef4444', lineHeight: 88 },
+  zhTimerUnit: { fontSize: 24, color: 'rgba(255,255,255,0.5)', marginTop: -8 },
+  zhTimerSpeed: { fontSize: 16, color: 'rgba(255,255,255,0.35)', marginTop: 8 },
   zhResultNum: { fontSize: 80, fontWeight: '900', color: '#4ade80', lineHeight: 88 },
   zhResultUnit: { fontSize: 24, color: 'rgba(255,255,255,0.6)', marginTop: -8 },
   zhRetryBtn: {
@@ -542,18 +634,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 28, paddingVertical: 12, borderRadius: 20,
   },
   zhRetryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  zhDebug: { fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 4 },
   zhCloseBtn: { marginTop: 12 },
   zhCloseText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
-
-  markerPhoto: {
-    width: 64, height: 64, borderRadius: 32,
-    borderWidth: 2.5, borderColor: colors.primary,
-  },
-  markerPlaceholder: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: 'rgba(4,120,87,0.12)',
-    borderWidth: 2, borderColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  markerPlus: { fontSize: 22, color: colors.primary, fontWeight: '300' },
 });
