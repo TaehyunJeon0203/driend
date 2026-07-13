@@ -11,13 +11,14 @@ type Tab = 'global' | 'friends';
 
 type Category = { key: string; label: string; unit: string; isCount?: boolean; asc?: boolean };
 const CATEGORIES: Category[] = [
-  { key: 'total_distance',   label: '누적 거리',     unit: 'km' },
-  { key: 'monthly_distance', label: '이번 달',       unit: 'km' },
-  { key: 'total_drives',     label: '총 주행 수',    unit: '회', isCount: true },
-  { key: 'visited_cities',   label: '방문 도시',     unit: '곳', isCount: true },
-  { key: 'longest_drive',    label: '최장 주행',     unit: 'km' },
-  { key: 'avg_distance',     label: '평균 거리',     unit: 'km' },
-  { key: 'zero_to_hundred',  label: '베스트 제로백', unit: 's',  asc: true },
+  { key: 'total_distance',   label: '누적 거리',  unit: 'km' },
+  { key: 'max_speed',        label: '최고속도',   unit: 'km/h' },
+  { key: 'zero_to_hundred',  label: '제로백',     unit: 's',  asc: true },
+  { key: 'monthly_distance', label: '이번 달',    unit: 'km' },
+  { key: 'longest_drive',    label: '최장 주행',  unit: 'km' },
+  { key: 'total_drives',     label: '총 주행 수', unit: '회', isCount: true },
+  { key: 'visited_cities',   label: '방문 도시',  unit: '곳', isCount: true },
+  { key: 'avg_distance',     label: '평균 거리',  unit: 'km' },
 ];
 
 type RankEntry = {
@@ -76,46 +77,50 @@ export default function RankingScreen() {
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    setMyUserId(user.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      const user = session.user;
+      setMyUserId(user.id);
 
-    let data: RankEntry[] = [];
-    if (tab === 'global') {
-      const res = await supabase.rpc('get_global_ranking', { p_category: category.key, p_limit: 30 });
-      data = res.data ?? [];
-    } else {
-      const [rankRes, acceptedRes, sentRes, receivedRes] = await Promise.all([
-        supabase.rpc('get_friend_ranking', { p_user_id: user.id, p_category: category.key }),
-        supabase.from('friendships').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`).eq('status', 'accepted'),
-        supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending'),
-        supabase.from('friendships').select('id, user_id, profiles!user_id(username, avatar_url)').eq('friend_id', user.id).eq('status', 'pending'),
-      ]);
+      let data: RankEntry[] = [];
+      if (tab === 'global') {
+        const res = await supabase.rpc('get_global_ranking', { p_category: category.key, p_limit: 30 });
+        data = res.data ?? [];
+      } else {
+        const [rankRes, acceptedRes, sentRes, receivedRes] = await Promise.all([
+          supabase.rpc('get_friend_ranking', { p_user_id: user.id, p_category: category.key }),
+          supabase.from('friendships').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`).eq('status', 'accepted'),
+          supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending'),
+          supabase.from('friendships').select('id, user_id, profiles!user_id(username, avatar_url)').eq('friend_id', user.id).eq('status', 'pending'),
+        ]);
 
-      data = rankRes.data ?? [];
+        data = rankRes.data ?? [];
 
-      const accepted = new Set<string>();
-      for (const f of acceptedRes.data ?? []) {
-        accepted.add(f.user_id === user.id ? f.friend_id : f.user_id);
+        const accepted = new Set<string>();
+        for (const f of acceptedRes.data ?? []) {
+          accepted.add(f.user_id === user.id ? f.friend_id : f.user_id);
+        }
+        setFriendIds(accepted);
+
+        const sent = new Set<string>();
+        for (const f of sentRes.data ?? []) sent.add(f.friend_id);
+        setSentIds(sent);
+
+        const received = (receivedRes.data ?? []).map((r: any) => ({
+          id: r.id,
+          user_id: r.user_id,
+          username: r.profiles?.username ?? '?',
+          avatar_url: r.profiles?.avatar_url ?? null,
+        }));
+        setPendingRequests(received);
       }
-      setFriendIds(accepted);
 
-      const sent = new Set<string>();
-      for (const f of sentRes.data ?? []) sent.add(f.friend_id);
-      setSentIds(sent);
-
-      const received = (receivedRes.data ?? []).map((r: any) => ({
-        id: r.id,
-        user_id: r.user_id,
-        username: r.profiles?.username ?? '?',
-        avatar_url: r.profiles?.avatar_url ?? null,
-      }));
-      setPendingRequests(received);
+      setRankings(data);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-
-    setRankings(data);
-    setLoading(false);
-    setRefreshing(false);
   }, [tab, category.key]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
