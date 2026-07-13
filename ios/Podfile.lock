@@ -113,6 +113,10 @@ PODS:
     - RNScreens
   - ExpoSecureStore (56.0.4):
     - ExpoModulesCore
+  - ExpoSensors (56.0.6):
+    - ExpoModulesCore
+  - ExpoSplashScreen (56.0.12):
+    - ExpoModulesCore
   - ExpoSymbols (56.0.6):
     - ExpoModulesCore
   - ExpoTaskManager (56.0.19):
@@ -1633,6 +1637,28 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - react-native-view-shot (5.1.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - React-NativeModulesApple (0.85.3):
     - hermes-engine
     - React-callinvoker
@@ -2087,6 +2113,28 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNGestureHandler (2.31.2):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNScreens (4.25.2):
     - hermes-engine
     - RCTRequired
@@ -2134,6 +2182,51 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNSVG (15.15.4):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - RNSVG/common (= 15.15.4)
+    - Yoga
+  - RNSVG/common (15.15.4):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - UMAppLoader (56.0.1)
   - Yoga (0.0.0)
 
@@ -2160,6 +2253,8 @@ DEPENDENCIES:
   - ExpoNotifications (from `../node_modules/expo-notifications/ios`)
   - ExpoRouter (from `../node_modules/expo-router/ios`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
+  - ExpoSensors (from `../node_modules/expo-sensors/ios`)
+  - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
   - ExpoSymbols (from `../node_modules/expo-symbols/ios`)
   - ExpoTaskManager (from `../node_modules/expo-task-manager/ios`)
   - "ExpoUI (from `../node_modules/expo-router/node_modules/@expo/ui/ios`)"
@@ -2206,6 +2301,7 @@ DEPENDENCIES:
   - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
   - React-mutationobservernativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/mutationobserver`)
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
+  - react-native-view-shot (from `../node_modules/react-native-view-shot`)
   - React-NativeModulesApple (from `../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
   - React-networking (from `../node_modules/react-native/ReactCommon/react/networking`)
   - React-oscompat (from `../node_modules/react-native/ReactCommon/oscompat`)
@@ -2243,7 +2339,9 @@ DEPENDENCIES:
   - "RNCKakaoCore (from `../node_modules/@react-native-kakao/core`)"
   - "RNCKakaoUser (from `../node_modules/@react-native-kakao/user`)"
   - "RNCMaskedView (from `../node_modules/@react-native-masked-view/masked-view`)"
+  - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
   - RNScreens (from `../node_modules/react-native-screens`)
+  - RNSVG (from `../node_modules/react-native-svg`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
@@ -2301,6 +2399,10 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-router/ios"
   ExpoSecureStore:
     :path: "../node_modules/expo-secure-store/ios"
+  ExpoSensors:
+    :path: "../node_modules/expo-sensors/ios"
+  ExpoSplashScreen:
+    :path: "../node_modules/expo-splash-screen/ios"
   ExpoSymbols:
     :path: "../node_modules/expo-symbols/ios"
   ExpoTaskManager:
@@ -2392,6 +2494,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/mutationobserver"
   react-native-safe-area-context:
     :path: "../node_modules/react-native-safe-area-context"
+  react-native-view-shot:
+    :path: "../node_modules/react-native-view-shot"
   React-NativeModulesApple:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios"
   React-networking:
@@ -2466,8 +2570,12 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-kakao/user"
   RNCMaskedView:
     :path: "../node_modules/@react-native-masked-view/masked-view"
+  RNGestureHandler:
+    :path: "../node_modules/react-native-gesture-handler"
   RNScreens:
     :path: "../node_modules/react-native-screens"
+  RNSVG:
+    :path: "../node_modules/react-native-svg"
   UMAppLoader:
     :path: "../node_modules/unimodules-app-loader/ios"
   Yoga:
@@ -2497,6 +2605,8 @@ SPEC CHECKSUMS:
   ExpoNotifications: d95d9a54ac370743260a4ccbf6038a12cfabbb06
   ExpoRouter: 5539806fcab8d38c639c9c255a6d73caa839436a
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
+  ExpoSensors: d34558ddf1f1d61c7a22180d1d40d8bd89d67d7b
+  ExpoSplashScreen: db432721a17dc8a718d5e2562f8edebe310e524f
   ExpoSymbols: 377747de25bcb1ab68ec68f23d81fb81d43eae83
   ExpoTaskManager: bb9420854e7fb41d5753bcaae3428bd42d60d5bf
   ExpoUI: cb2928f5537135cff59e7b84b4adbeb72355f9fd
@@ -2547,6 +2657,7 @@ SPEC CHECKSUMS:
   React-microtasksnativemodule: ab33a818d339f5a1da308893c11b487be66121a8
   React-mutationobservernativemodule: a42d1626651ccd7d0dc02a56e69d4ec77c248893
   react-native-safe-area-context: 6b4966397ada0f7dd481e4486a2ef936834861a1
+  react-native-view-shot: 5bf17256c542d46c02a6f2d2752fe88eb3a8d058
   React-NativeModulesApple: deba264b03bd79c6bd61014fa30e40321b5e443a
   React-networking: 35e6070b084f435429f85c5db40b4d5b38652fe9
   React-oscompat: 64a0c7ef5441855dc6e2a6afe8ba8f92aa05075e
@@ -2584,7 +2695,9 @@ SPEC CHECKSUMS:
   RNCKakaoCore: b944f36a27bad05af2cb473d968e7b13c2e47119
   RNCKakaoUser: 5209955219da87e90a1d2e0076c1a0b5f5dd1452
   RNCMaskedView: eb2b2e538afa907f05a5848a1a1ac26092e6fec9
+  RNGestureHandler: 2ff61eac036eaf89f6818bf4ed9c39771a17d134
   RNScreens: f94000b3cb1eb14cbb8d08dd6074fdd6ccf0e6b0
+  RNSVG: 04044c3abcf177fd674a1a3d13097efa1adebcbe
   UMAppLoader: b7d22886a244871c20b5a8f2fcea13c18534e677
   Yoga: 77dfa8673de2874e1855002ae59c68b8be9b007b
 

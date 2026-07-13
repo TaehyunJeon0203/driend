@@ -7,13 +7,19 @@ import { useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/services/supabase';
 import { setActiveTripId } from '../../src/services/locationTracker';
+import { clipAndUploadCityPhoto } from '../../src/services/cityPhotoClipper';
+import CityPhotoCropper from '../../src/components/CityPhotoCropper';
 import { colors, spacing, radius, typography } from '../../src/theme';
+import CITY_DATA from '../../assets/korea-cities.json';
 
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
 type MonthlyData = { month: string; distance_km: number };
 type Trip = { id: string; name: string; started_at: string; ended_at: string | null; total_distance_km: number; total_drives: number };
 type Drive = { id: string; started_at: string; ended_at: string | null; distance_km: number | null; max_speed_kmh: number | null; start_address: string | null; end_address: string | null; zero_to_hundred_s: number | null };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
+type CityGeo = { code: string; polygons: { latitude: number; longitude: number }[][] };
+
+const CITIES = CITY_DATA as CityGeo[];
 
 const BAR_MAX_H = 72;
 
@@ -41,6 +47,7 @@ export default function StatsScreen() {
   const [drives, setDrives] = useState<Drive[]>([]);
   const [cities, setCities] = useState<VisitedCity[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [cropTarget, setCropTarget] = useState<{ city: VisitedCity; imageUri: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Drive | null>(null);
@@ -54,8 +61,9 @@ export default function StatsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      const user = session.user;
 
       const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes, profileRes] = await Promise.all([
         supabase.rpc('get_my_stats', { p_user_id: user.id }),
@@ -182,25 +190,24 @@ export default function StatsScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.9,
     });
 
     if (result.canceled) return;
+    setCropTarget({ city, imageUri: result.assets[0].uri });
+  };
 
+  const uploadCroppedPhoto = async (city: VisitedCity, croppedUri: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     setUploading(city.city_code);
     try {
-      const asset = result.assets[0];
-      const ext = asset.uri.split('.').pop() ?? 'jpg';
-      const path = `${user.id}/${city.id}.${ext}`;
+      const path = `${user.id}/${city.id}.png`;
 
       const { data: { session } } = await supabase.auth.getSession();
       const formData = new FormData();
-      formData.append('file', { uri: asset.uri, name: `photo.${ext}`, type: `image/${ext}` } as any);
+      formData.append('file', { uri: croppedUri, name: 'photo.png', type: 'image/png' } as any);
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
@@ -218,15 +225,22 @@ export default function StatsScreen() {
         .from('city-photos')
         .getPublicUrl(path);
 
+      const { url: clippedUrl, error: clipError } = await clipAndUploadCityPhoto({
+        cityCode: city.city_code,
+        storagePath: path,
+        publicUrl,
+      });
+      if (clipError) console.warn('clip-city-photo failed:', clipError);
+
       const { error: updateError } = await supabase
         .from('visited_cities')
-        .update({ photo_url: publicUrl })
+        .update({ photo_url: clippedUrl })
         .eq('id', city.id);
 
       if (updateError) throw updateError;
 
       setCities((prev) =>
-        prev.map((c) => c.id === city.id ? { ...c, photo_url: publicUrl } : c)
+        prev.map((c) => c.id === city.id ? { ...c, photo_url: clippedUrl } : c)
       );
     } catch (e: any) {
       Alert.alert('업로드 실패', e.message ?? String(e));
@@ -306,7 +320,7 @@ export default function StatsScreen() {
         {bestZeroHundred && (
           <View style={s.statCard}>
             <Text style={s.statNum}>{bestZeroHundred.toFixed(1)}</Text>
-            <Text style={s.statLabel}>베스트 제로백 s</Text>
+            <Text style={s.statLabel}>제로백 s</Text>
           </View>
         )}
       </View>
@@ -505,6 +519,18 @@ export default function StatsScreen() {
         </View>
       </View>
     </Modal>
+
+    <CityPhotoCropper
+      visible={!!cropTarget}
+      imageUri={cropTarget?.imageUri ?? null}
+      polygons={CITIES.find((c) => c.code === cropTarget?.city.city_code)?.polygons ?? []}
+      onCancel={() => setCropTarget(null)}
+      onConfirm={(uri) => {
+        const target = cropTarget;
+        setCropTarget(null);
+        if (target) uploadCroppedPhoto(target.city, uri);
+      }}
+    />
     </View>
   );
 }
