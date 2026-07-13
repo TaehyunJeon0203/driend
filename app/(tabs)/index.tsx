@@ -167,11 +167,12 @@ export default function MapScreen() {
     const getFreq = (lng: number, lat: number) =>
       freqMap.get(`${Math.round(lat * 1000)},${Math.round(lng * 1000)}`) ?? 1;
 
+    // 단일 그린 계열 그라데이션(연한 세이지 → 짙은 포레스트)으로 통일 — 채도 다른 색 섞이는 것보다 차분한 인상
     const freqStyle = (freq: number): { color: string; width: number } => {
-      if (freq >= 7) return { color: '#9333ea', width: 5 };  // 보라 (7회+)
-      if (freq >= 4) return { color: '#2563eb', width: 4 };  // 파랑 (4-6회)
-      if (freq >= 2) return { color: '#16a34a', width: 3.5 }; // 초록 (2-3회)
-      return { color: '#4ade80', width: 2.5 };                // 연초록 (1회)
+      if (freq >= 7) return { color: '#0B4A34', width: 6 };  // 짙은 포레스트 (7회+)
+      if (freq >= 4) return { color: '#1F6E4F', width: 5 };  // 진한 에메랄드 (4-6회)
+      if (freq >= 2) return { color: '#5B9279', width: 4 };  // 세이지 그린 (2-3회)
+      return { color: '#A8C3B4', width: 3 };                 // 연한 세이지 (1회)
     };
 
     const segments: Array<{ coords: LatLng[]; color: string; width: number }> = [];
