@@ -26,25 +26,28 @@ export default function ProfileScreen() {
   const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
 
   const load = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      const user = session.user;
 
-    const [profileRes, vehicleRes] = await Promise.all([
-      supabase.from('profiles').select('id, username').eq('id', user.id).single(),
-      supabase.from('vehicles').select('id, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
-    ]);
+      const [profileRes, vehicleRes, detectVal] = await Promise.all([
+        supabase.from('profiles').select('id, username').eq('id', user.id).single(),
+        supabase.from('vehicles').select('id, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
+        AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY),
+      ]);
 
-    const detectVal = await AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY);
-    setDriveDetectEnabled(detectVal === 'true');
-
-    setIsKakaoUser(!!user.user_metadata?.kakao_id);
-    if (profileRes.data) setProfile(profileRes.data);
-    if (vehicleRes.data) {
-      setVehicle(vehicleRes.data);
-      setVehicleName(vehicleRes.data.name ?? '');
-      setBtDeviceName(vehicleRes.data.bt_device_name ?? '');
+      setDriveDetectEnabled(detectVal === 'true');
+      setIsKakaoUser(!!user.user_metadata?.kakao_id);
+      if (profileRes.data) setProfile(profileRes.data);
+      if (vehicleRes.data) {
+        setVehicle(vehicleRes.data);
+        setVehicleName(vehicleRes.data.name ?? '');
+        setBtDeviceName(vehicleRes.data.bt_device_name ?? '');
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
