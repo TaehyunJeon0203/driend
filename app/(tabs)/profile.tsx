@@ -62,11 +62,11 @@ export default function ProfileScreen() {
     if (!vehicleName.trim()) return;
     setSaving(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
 
     const payload = {
-      user_id: user.id,
+      user_id: session.user.id,
       name: vehicleName.trim(),
       bt_device_name: btDeviceName.trim() || null,
     };

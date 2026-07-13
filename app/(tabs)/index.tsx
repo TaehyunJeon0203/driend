@@ -18,31 +18,25 @@ import {
   startTracking, stopTracking, isTracking,
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
-import { pointInPolygons, dedupeByGrid } from '../../src/services/geo';
+import { buildCityIndex, matchVisitedCities } from '../../src/services/geo';
 import { colors } from '../../src/theme';
-import PROVINCE_DATA from '../../assets/korea-provinces.json';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type MapMode = 'drive' | 'photo';
 type RouteLine = { drive_id: string; coordinates: [number, number][] };
 type LatLng = { latitude: number; longitude: number };
 type VisitedCity = { city_code: string; city_name: string; photo_url: string | null };
-type Province = { code: string; name: string; center: LatLng; polygons: LatLng[][] };
 type City = { code: string; name: string; province_code: string; center: LatLng; polygons: LatLng[][] };
 
-const PROVINCES = PROVINCE_DATA as Province[];
 const CITIES = CITY_DATA as City[];
+const CITY_INDEX = buildCityIndex(CITIES);
 
 type Region = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
 const CITY_REGION_MAP = new Map<string, Region>(
-  CITIES.map((c) => {
-    const all = c.polygons.flat();
-    const lats = all.map((p) => p.latitude);
-    const lngs = all.map((p) => p.longitude);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-    return [c.code, { latitude: minLat, longitude: minLng, latitudeDelta: maxLat - minLat, longitudeDelta: maxLng - minLng }];
-  })
+  CITY_INDEX.map(({ city, bbox }) => [
+    city.code,
+    { latitude: bbox.minLat, longitude: bbox.minLng, latitudeDelta: bbox.maxLat - bbox.minLat, longitudeDelta: bbox.maxLng - bbox.minLng },
+  ])
 );
 
 const PROVINCE_COLORS = [
@@ -50,8 +44,9 @@ const PROVINCE_COLORS = [
   '#22D3EE', '#38BDF8', '#60A5FA', '#818CF8', '#A78BFA', '#C084FC',
   '#E879F9', '#F472B6', '#FB7185', '#FDE68A', '#86EFAC',
 ];
+const PROVINCE_CODES = Array.from(new Set(CITIES.map((c) => c.province_code))).sort();
 const PROVINCE_COLOR_MAP = new Map(
-  PROVINCES.map((p, i) => [p.code, PROVINCE_COLORS[i % PROVINCE_COLORS.length]])
+  PROVINCE_CODES.map((code, i) => [code, PROVINCE_COLORS[i % PROVINCE_COLORS.length]])
 );
 const PHOTO_MAP_BG = '#122238';
 
@@ -84,19 +79,19 @@ export default function MapScreen() {
   const zhTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadPastRoutes = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase.rpc('get_user_route_lines', { p_user_id: user.id });
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const { data } = await supabase.rpc('get_user_route_lines', { p_user_id: session.user.id });
     if (data) setPastLines(data);
   }, []);
 
   const loadVisitedCities = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
     const { data } = await supabase
       .from('visited_cities')
       .select('city_code, city_name, photo_url')
-      .eq('user_id', user.id);
+      .eq('user_id', session.user.id);
     if (data) setVisitedCities(data);
   }, []);
 
@@ -227,24 +222,15 @@ export default function MapScreen() {
     cityBackfillDone.current = true;
 
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
       const allCoords = pastLines.flatMap((l) =>
         (l.coordinates ?? []).map(([lng, lat]) => ({ latitude: lat, longitude: lng }))
       );
-      const points = dedupeByGrid(allCoords);
-      const matched = new Map<string, string>();
-      for (const pt of points) {
-        for (const city of CITIES) {
-          if (pointInPolygons(pt, city.polygons)) {
-            matched.set(city.code, city.name);
-            break;
-          }
-        }
-      }
+      const matched = matchVisitedCities(allCoords, CITY_INDEX);
       if (!matched.size) return;
       const rows = Array.from(matched, ([city_code, city_name]) => ({
-        user_id: user.id, city_code, city_name, first_visited_at: new Date().toISOString(),
+        user_id: session.user.id, city_code, city_name, first_visited_at: new Date().toISOString(),
       }));
       await supabase.from('visited_cities').upsert(rows, { onConflict: 'user_id,city_code', ignoreDuplicates: true });
       loadVisitedCities();

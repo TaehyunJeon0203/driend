@@ -127,11 +127,11 @@ export default function StatsScreen() {
     if (!tripName.trim() || tripSaving) return;
     setTripSaving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
       const { data: trip, error } = await supabase
         .from('trips')
-        .insert({ user_id: user.id, name: tripName.trim() })
+        .insert({ user_id: session.user.id, name: tripName.trim() })
         .select('id, name, started_at, ended_at')
         .single();
       if (error) { Alert.alert('오류', error.message); return; }
@@ -198,20 +198,20 @@ export default function StatsScreen() {
   };
 
   const uploadCroppedPhoto = async (city: VisitedCity, croppedUri: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const user = session.user;
 
     setUploading(city.city_code);
     try {
       const path = `${user.id}/${city.id}.png`;
 
-      const { data: { session } } = await supabase.auth.getSession();
       const formData = new FormData();
       formData.append('file', { uri: croppedUri, name: 'photo.png', type: 'image/png' } as any);
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
-        xhr.setRequestHeader('Authorization', `Bearer ${session!.access_token}`);
+        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
         xhr.setRequestHeader('x-upsert', 'true');
         xhr.onload = () => {
           if (xhr.status < 300) resolve();

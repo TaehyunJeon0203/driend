@@ -4,11 +4,12 @@ import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
 import { processMatchAsync } from './mapMatcher';
-import { pointInPolygons, dedupeByGrid } from './geo';
+import { buildCityIndex, matchVisitedCities } from './geo';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type City = { code: string; name: string; province_code: string; center: Coordinate; polygons: Coordinate[][] };
 const CITIES = CITY_DATA as City[];
+const CITY_INDEX = buildCityIndex(CITIES);
 
 const LOCATION_TASK = 'driend-location-task';
 const MONITOR_TASK = 'driend-monitor-task';
@@ -185,17 +186,7 @@ function haversineKm(a: Coordinate, b: Coordinate): number {
 }
 
 async function recordVisitedCities(userId: string, coords: Coordinate[]) {
-  const points = dedupeByGrid(coords);
-  const matched = new Map<string, string>(); // code -> name
-
-  for (const pt of points) {
-    for (const city of CITIES) {
-      if (pointInPolygons(pt, city.polygons)) {
-        matched.set(city.code, city.name);
-        break;
-      }
-    }
-  }
+  const matched = matchVisitedCities(coords, CITY_INDEX);
   if (!matched.size) return;
 
   const rows = Array.from(matched, ([city_code, city_name]) => ({
@@ -241,12 +232,12 @@ export async function startMonitoring(): Promise<void> {
 
 export async function cleanupOrphanedDrives(): Promise<void> {
   if (isTracking()) return;
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) return;
   await supabase
     .from('drives')
     .update({ ended_at: new Date().toISOString(), distance_km: 0 })
-    .eq('user_id', user.id)
+    .eq('user_id', session.user.id)
     .is('ended_at', null);
 }
 
@@ -257,14 +248,10 @@ export async function startTracking(): Promise<boolean> {
   const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
   if (bgStatus !== 'granted') return false;
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  await supabase.from('profiles').upsert({
-    id: user.id,
-    username: user.user_metadata?.nickname ?? `user_${user.id.slice(0, 6)}`,
-    avatar_url: user.user_metadata?.avatar_url ?? null,
-  }, { onConflict: 'id', ignoreDuplicates: true });
+  // profile 존재 보장은 app/_layout.tsx의 handleAuthSession에서 로그인 시 이미 처리됨
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) return false;
+  const user = session.user;
 
   const { data: drive, error } = await supabase
     .from('drives')
@@ -313,7 +300,8 @@ export async function stopTracking(): Promise<string | null> {
   const distanceKm = runningDistanceKm;
   const sampleCoords = driveCoords.slice();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   let startAddress: string | null = null;
   let endAddress: string | null = null;

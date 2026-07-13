@@ -1,4 +1,23 @@
 export type LatLng = { latitude: number; longitude: number };
+export type BBox = { minLat: number; maxLat: number; minLng: number; maxLng: number };
+
+export function bboxOfPolygons(polygons: LatLng[][]): BBox {
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const ring of polygons) {
+    for (const p of ring) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+  }
+  return { minLat, maxLat, minLng, maxLng };
+}
+
+function inBBox(pt: LatLng, box: BBox): boolean {
+  return pt.latitude >= box.minLat && pt.latitude <= box.maxLat &&
+    pt.longitude >= box.minLng && pt.longitude <= box.maxLng;
+}
 
 function pointInRing(pt: LatLng, ring: LatLng[]): boolean {
   const x = pt.longitude;
@@ -32,4 +51,34 @@ export function dedupeByGrid(coords: LatLng[], precision = 2): LatLng[] {
     result.push(c);
   }
   return result;
+}
+
+/** 도시별 bbox를 1회 계산해 캐싱 — point-in-polygon 전에 저렴하게 후보를 걸러냄. */
+export function buildCityIndex<T extends { polygons: LatLng[][] }>(cities: T[]) {
+  return cities.map((city) => ({ city, bbox: bboxOfPolygons(city.polygons) }));
+}
+
+export function matchCity<T extends { polygons: LatLng[][] }>(
+  pt: LatLng,
+  index: { city: T; bbox: BBox }[]
+): T | null {
+  for (const { city, bbox } of index) {
+    if (!inBBox(pt, bbox)) continue;
+    if (pointInPolygons(pt, city.polygons)) return city;
+  }
+  return null;
+}
+
+/** 좌표 목록을 격자로 축약한 뒤 도시 폴리곤과 매칭 (code -> name 맵 반환). */
+export function matchVisitedCities<T extends { code: string; name: string; polygons: LatLng[][] }>(
+  coords: LatLng[],
+  index: { city: T; bbox: BBox }[]
+): Map<string, string> {
+  const points = dedupeByGrid(coords);
+  const matched = new Map<string, string>();
+  for (const pt of points) {
+    const city = matchCity(pt, index);
+    if (city) matched.set(city.code, city.name);
+  }
+  return matched;
 }

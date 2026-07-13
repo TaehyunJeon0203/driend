@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { bboxOfPolygons } from './geo';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type Coord = { latitude: number; longitude: number };
@@ -16,11 +17,7 @@ export async function clipAndUploadCityPhoto(params: {
   const cityGeo = CITIES.find((c) => c.code === cityCode);
   if (!cityGeo || !cityGeo.polygons.length) return { url: publicUrl, error: '지역 폴리곤 없음' };
 
-  const all = cityGeo.polygons.flat();
-  const minLat = all.reduce((m, c) => Math.min(m, c.latitude), Infinity);
-  const maxLat = all.reduce((m, c) => Math.max(m, c.latitude), -Infinity);
-  const minLng = all.reduce((m, c) => Math.min(m, c.longitude), Infinity);
-  const maxLng = all.reduce((m, c) => Math.max(m, c.longitude), -Infinity);
+  const { minLat, maxLat, minLng, maxLng } = bboxOfPolygons(cityGeo.polygons);
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { url: publicUrl, error: '세션 없음' };

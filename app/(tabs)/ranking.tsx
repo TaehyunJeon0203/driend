@@ -134,10 +134,10 @@ export default function RankingScreen() {
   };
 
   const addFriend = async (targetId: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
     const { error } = await supabase.from('friendships').insert({
-      user_id: user.id,
+      user_id: session.user.id,
       friend_id: targetId,
       status: 'pending',
     });

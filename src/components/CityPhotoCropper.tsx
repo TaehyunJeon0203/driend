@@ -7,6 +7,7 @@ import {
 } from 'react-native-gesture-handler';
 import Svg, { Path } from 'react-native-svg';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
+import { bboxOfPolygons } from '../services/geo';
 import { colors } from '../theme';
 
 type LatLng = { latitude: number; longitude: number };
@@ -58,11 +59,7 @@ export default function CityPhotoCropper({
 
   if (!visible || !imageUri) return null;
 
-  const all = polygons.flat();
-  const minLat = Math.min(...all.map((p) => p.latitude));
-  const maxLat = Math.max(...all.map((p) => p.latitude));
-  const minLng = Math.min(...all.map((p) => p.longitude));
-  const maxLng = Math.max(...all.map((p) => p.longitude));
+  const { minLat, maxLat, minLng, maxLng } = bboxOfPolygons(polygons);
   const avgLatRad = ((minLat + maxLat) / 2) * (Math.PI / 180);
   const geoW = (maxLng - minLng) * Math.cos(avgLatRad);
   const geoH = maxLat - minLat;
