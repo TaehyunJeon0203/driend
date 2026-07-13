@@ -21,7 +21,7 @@
     "android": {
       "package": "com.driend.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -65,16 +65,28 @@
           "photosPermission": "지역 사진을 업로드하기 위해 사진 라이브러리 접근이 필요합니다."
         }
       ],
-      ["expo-notifications", {
-        "icon": "./assets/icon.png",
-        "color": "#047857",
-        "sounds": []
-      }],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#047857",
+          "sounds": []
+        }
+      ],
       "expo-web-browser",
       [
         "@mj-studio/react-native-naver-map",
         {
           "client_id": "wuodc80i7z"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
         }
       ]
     ]
