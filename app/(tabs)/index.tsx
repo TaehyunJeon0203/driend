@@ -50,6 +50,9 @@ const PROVINCE_COLOR_MAP = new Map(
 );
 const PHOTO_MAP_BG = '#122238';
 
+// GPS speed가 실제 순간속도보다 지연 반영되는 만큼 보정 (실측 페어 2건 평균: 0.65s, 0.70s)
+const ZH_GPS_LAG_OFFSET_MS = 680;
+
 export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
   const isFirstPoint = useRef(true);
@@ -327,7 +330,8 @@ export default function MapScreen() {
             endTs = prevTs + (100 - prevKmh) / avgRate;
           }
 
-          const elapsed = Math.round((endTs - zhStartRef.current) / 100) / 10;
+          const correctedMs = Math.max(0, (endTs - zhStartRef.current) - ZH_GPS_LAG_OFFSET_MS);
+          const elapsed = Math.round(correctedMs / 100) / 10;
           setZhResult(elapsed);
           setZhState('done');
           zhStateRef.current = 'done';
