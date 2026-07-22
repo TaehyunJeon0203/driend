@@ -73,7 +73,6 @@
           "sounds": []
         }
       ],
-      "expo-web-browser",
       [
         "@mj-studio/react-native-naver-map",
         {
