@@ -1,0 +1,7 @@
+project_id = "vrcaacjnbslqrioihwnt"
+
+[functions.privacy-policy]
+verify_jwt = false
+
+[functions.terms-of-service]
+verify_jwt = false

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator, Platform, Switch,
+  StyleSheet, Alert, ActivityIndicator, Platform, Switch, Linking,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -245,6 +245,23 @@ export default function ProfileScreen() {
         )}
       </View>
 
+      {/* 약관/정책 */}
+      <View style={s.card}>
+        <TouchableOpacity
+          style={s.legalRow}
+          onPress={() => Linking.openURL('https://vrcaacjnbslqrioihwnt.supabase.co/functions/v1/privacy-policy')}
+        >
+          <Text style={s.legalText}>개인정보처리방침</Text>
+        </TouchableOpacity>
+        <View style={s.legalDivider} />
+        <TouchableOpacity
+          style={s.legalRow}
+          onPress={() => Linking.openURL('https://vrcaacjnbslqrioihwnt.supabase.co/functions/v1/terms-of-service')}
+        >
+          <Text style={s.legalText}>이용약관</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* 로그아웃 */}
       <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
         <Text style={s.logoutText}>로그아웃</Text>
@@ -322,4 +339,8 @@ const s = StyleSheet.create({
     alignItems: 'center', borderRadius: radius.md,
   },
   deleteText: { fontSize: 13, fontWeight: '500', color: colors.textTertiary },
+
+  legalRow: { paddingVertical: spacing.xs },
+  legalText: { fontSize: 14, color: colors.textSecondary },
+  legalDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.textTertiary, opacity: 0.3 },
 });
