@@ -24,6 +24,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [isKakaoUser, setIsKakaoUser] = useState(false);
   const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +113,38 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      '회원 탈퇴',
+      '주행 기록, 지역 사진, 친구 관계 등 모든 데이터가 영구적으로 삭제되며 복구할 수 없습니다. 정말 탈퇴하시겠어요?',
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '탈퇴하기', style: 'destructive', onPress: confirmDeleteAccount },
+      ]
+    );
+  };
+
+  const confirmDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/delete-account`,
+        { method: 'POST', headers: { Authorization: `Bearer ${session.access_token}` } }
+      );
+      if (!res.ok) throw new Error(await res.text());
+
+      await supabase.auth.signOut();
+      router.replace('/(auth)/login');
+    } catch (e: any) {
+      Alert.alert('오류', '계정 삭제 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   if (loading) {
@@ -216,6 +249,17 @@ export default function ProfileScreen() {
       <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
         <Text style={s.logoutText}>로그아웃</Text>
       </TouchableOpacity>
+
+      {/* 회원 탈퇴 */}
+      <TouchableOpacity
+        style={s.deleteBtn}
+        onPress={handleDeleteAccount}
+        disabled={deleting}
+      >
+        {deleting
+          ? <ActivityIndicator size="small" color={colors.textTertiary} />
+          : <Text style={s.deleteText}>회원 탈퇴</Text>}
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -272,4 +316,10 @@ const s = StyleSheet.create({
     backgroundColor: colors.card,
   },
   logoutText: { fontSize: 15, fontWeight: '600', color: colors.danger },
+
+  deleteBtn: {
+    marginTop: spacing.xs, padding: spacing.sm,
+    alignItems: 'center', borderRadius: radius.md,
+  },
+  deleteText: { fontSize: 13, fontWeight: '500', color: colors.textTertiary },
 });
