@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { supabase } from '../../src/services/supabase';
 import {
   DRIVE_DETECT_NOTIFICATION_KEY, startMonitoring,
@@ -97,9 +98,43 @@ export default function ProfileScreen() {
   };
 
   const toggleDriveDetect = async (value: boolean) => {
-    setDriveDetectEnabled(value);
-    await AsyncStorage.setItem(DRIVE_DETECT_NOTIFICATION_KEY, value ? 'true' : 'false');
-    if (value) startMonitoring();
+    if (!value) {
+      setDriveDetectEnabled(false);
+      await AsyncStorage.setItem(DRIVE_DETECT_NOTIFICATION_KEY, 'false');
+      return;
+    }
+
+    const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+    if (bgStatus !== 'granted') {
+      await new Promise<void>((resolve) => {
+        Alert.alert(
+          '백그라운드 위치 권한 안내',
+          '이 기능은 앱을 사용하지 않는 동안에도 주행 여부를 확인해 알림을 보내드려요. 다음 화면에서 위치 접근을 "항상 허용"으로 선택해주세요.',
+          [{ text: '확인', onPress: () => resolve() }]
+        );
+      });
+
+      const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+      if (fgStatus !== 'granted') {
+        Alert.alert('권한 필요', '위치 권한이 없으면 주행 감지 알림을 사용할 수 없어요.');
+        return;
+      }
+      let { status: newBgStatus } = await Location.requestBackgroundPermissionsAsync();
+      if (newBgStatus !== 'granted') {
+        // iOS: 방금 "항상 허용"을 선택해도 권한 상태 반영에 약간의 지연이 있을 수 있어
+        // 잠깐 대기 후 한 번 더 확인
+        await new Promise((r) => setTimeout(r, 500));
+        ({ status: newBgStatus } = await Location.getBackgroundPermissionsAsync());
+      }
+      if (newBgStatus !== 'granted') {
+        Alert.alert('권한 필요', '설정 > 개인정보 보호 > 위치 서비스에서 Driend를 "항상"으로 설정해주세요.');
+        return;
+      }
+    }
+
+    setDriveDetectEnabled(true);
+    await AsyncStorage.setItem(DRIVE_DETECT_NOTIFICATION_KEY, 'true');
+    startMonitoring();
   };
 
   const handleLogout = () => {

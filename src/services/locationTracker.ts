@@ -245,7 +245,13 @@ export async function startTracking(): Promise<boolean> {
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
   if (fgStatus !== 'granted') return false;
 
-  const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+  let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+  if (bgStatus !== 'granted') {
+    // iOS: 방금 "항상 허용"을 선택해도 CLLocationManager의 권한 상태 반영에 약간의 지연이
+    // 있어 바로 재조회하면 이전 상태가 나올 수 있음 — 잠깐 대기 후 한 번 더 확인
+    await new Promise((r) => setTimeout(r, 500));
+    ({ status: bgStatus } = await Location.getBackgroundPermissionsAsync());
+  }
   if (bgStatus !== 'granted') return false;
 
   // profile 존재 보장은 app/_layout.tsx의 handleAuthSession에서 로그인 시 이미 처리됨

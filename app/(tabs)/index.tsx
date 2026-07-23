@@ -369,6 +369,19 @@ export default function MapScreen() {
         await stopTracking();
       } else {
         isFirstPoint.current = true;
+
+        const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
+        const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+        if (fgStatus === 'undetermined' || bgStatus === 'undetermined') {
+          await new Promise<void>((resolve) => {
+            Alert.alert(
+              '위치 접근 권한 안내',
+              '주행 경로를 기록하려면 위치 접근이 필요해요. 화면을 보고 있지 않은 동안에도 경로가 끊기지 않도록 다음 화면에서 "항상 허용"을 선택해주세요.',
+              [{ text: '확인', onPress: () => resolve() }]
+            );
+          });
+        }
+
         let ok = false;
         try { ok = await startTracking(); } catch (e: any) {
           Alert.alert('오류', e.message ?? String(e)); return;
