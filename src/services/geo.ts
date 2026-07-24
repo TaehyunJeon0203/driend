@@ -19,6 +19,21 @@ function inBBox(pt: LatLng, box: BBox): boolean {
     pt.longitude >= box.minLng && pt.longitude <= box.maxLng;
 }
 
+export function bboxIntersects(a: BBox, b: BBox): boolean {
+  return a.minLat <= b.maxLat && a.maxLat >= b.minLat &&
+    a.minLng <= b.maxLng && a.maxLng >= b.minLng;
+}
+
+/** 뷰포트 컬링 시 화면 가장자리에서 지역이 갑자기 팝인/아웃 되는 걸 완화하기 위한 여유분. */
+export function padBBox(box: BBox, ratio: number): BBox {
+  const latPad = (box.maxLat - box.minLat) * ratio;
+  const lngPad = (box.maxLng - box.minLng) * ratio;
+  return {
+    minLat: box.minLat - latPad, maxLat: box.maxLat + latPad,
+    minLng: box.minLng - lngPad, maxLng: box.maxLng + lngPad,
+  };
+}
+
 function pointInRing(pt: LatLng, ring: LatLng[]): boolean {
   const x = pt.longitude;
   const y = pt.latitude;

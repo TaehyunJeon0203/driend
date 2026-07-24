@@ -5,7 +5,13 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { Accelerometer } from 'expo-sensors';
+import {
+  LongPressGestureHandler, State,
+  type LongPressGestureHandlerEventPayload,
+  type HandlerStateChangeEvent,
+} from 'react-native-gesture-handler';
 import {
   NaverMapView,
   NaverMapPathOverlay,
@@ -18,17 +24,22 @@ import {
   startTracking, stopTracking, isTracking,
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
-import { buildCityIndex, matchVisitedCities } from '../../src/services/geo';
+import { buildCityIndex, bboxIntersects, matchCity, matchVisitedCities, padBBox, type BBox } from '../../src/services/geo';
+import { clipAndUploadCityPhoto } from '../../src/services/cityPhotoClipper';
+import CityPhotoCropper from '../../src/components/CityPhotoCropper';
 import { colors } from '../../src/theme';
 import CITY_DATA from '../../assets/korea-cities.json';
+import CITY_DATA_SIMPLIFIED from '../../assets/korea-cities-simplified.json';
 
 type MapMode = 'drive' | 'photo';
 type RouteLine = { drive_id: string; coordinates: [number, number][] };
 type LatLng = { latitude: number; longitude: number };
-type VisitedCity = { city_code: string; city_name: string; photo_url: string | null };
+type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 type City = { code: string; name: string; province_code: string; center: LatLng; polygons: LatLng[][] };
+type CropTarget = { cityId: string; cityCode: string; imageUri: string; polygons: LatLng[][] };
 
 const CITIES = CITY_DATA as City[];
+const CITIES_SIMPLIFIED = CITY_DATA_SIMPLIFIED as City[];
 const CITY_INDEX = buildCityIndex(CITIES);
 
 type Region = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
@@ -49,6 +60,16 @@ const PROVINCE_COLOR_MAP = new Map(
   PROVINCE_CODES.map((code, i) => [code, PROVINCE_COLORS[i % PROVINCE_COLORS.length]])
 );
 const PHOTO_MAP_BG = '#122238';
+const CITY_BBOX_MAP = new Map(CITY_INDEX.map(({ city, bbox }) => [city.code, bbox]));
+
+// 사진 모드 축소/확대에 따른 배경 렌더링 정밀도 전환 임계값 (경계값 근처 떨림 방지용 히스테리시스).
+// 두 단계 모두 시군구 단위 경계는 유지하되(도로 뭉개지 않음), 축소 상태에서는 자잘한 섬을
+// 제외하고 정점을 더 단순화한 데이터셋(korea-cities-simplified.json)을 사용. 뷰포트에 걸친
+// 지역만 그리므로(아래 photoVisibleCities) 임계값을 낮게 잡아도 230개를 한꺼번에 그리는
+// 상황(원래 프레임드랍 원인)은 재발하지 않음.
+const PHOTO_LOD_ENTER_HIGH_ZOOM = 7.2; // 이 이상 확대 시 원본 정밀도로 전환
+const PHOTO_LOD_ENTER_LOW_ZOOM = 6.6;  // 이 이하 축소 시 단순화된 데이터셋으로 전환
+const PHOTO_VIEWPORT_PAD_RATIO = 0.3;  // 화면 경계에서 지역이 갑자기 나타나지 않도록 여유분
 
 // GPS speed가 실제 순간속도보다 지연 반영되는 만큼 보정 (실측 페어 2건 평균: 0.65s, 0.70s)
 const ZH_GPS_LAG_OFFSET_MS = 680;
@@ -66,6 +87,11 @@ export default function MapScreen() {
 
   const [mapMode, setMapMode] = useState<MapMode>('drive');
   const [visitedCities, setVisitedCities] = useState<VisitedCity[]>([]);
+  const [photoUploading, setPhotoUploading] = useState<string | null>(null);
+  const [cropTarget, setCropTarget] = useState<CropTarget | null>(null);
+  const [photoLowDetail, setPhotoLowDetail] = useState(true);
+  const photoLowDetailRef = useRef(true);
+  const [photoVisibleRegion, setPhotoVisibleRegion] = useState<BBox | null>(null);
 
   // 제로백 측정
   type ZHState = 'ready' | 'measuring' | 'done';
@@ -93,7 +119,7 @@ export default function MapScreen() {
     if (!session?.user) return;
     const { data } = await supabase
       .from('visited_cities')
-      .select('city_code, city_name, photo_url')
+      .select('id, city_code, city_name, photo_url')
       .eq('user_id', session.user.id);
     if (data) setVisitedCities(data);
   }, []);
@@ -200,22 +226,59 @@ export default function MapScreen() {
     return segments;
   }, [pastLines]);
 
-  const citiesWithMeta = useMemo(() => {
+  const withCityMeta = useCallback((cities: City[]) => {
     const cityMap = new Map(visitedCities.map((c) => [c.city_code, c]));
-    return CITIES.map((c) => ({
+    return cities.map((c) => ({
       ...c,
       color: PROVINCE_COLOR_MAP.get(c.province_code) ?? '#94A3B8',
       visited: cityMap.has(c.code),
+      visitedId: cityMap.get(c.code)?.id ?? null,
       photoUrl: cityMap.get(c.code)?.photo_url ?? null,
     }));
   }, [visitedCities]);
+
+  const citiesWithMeta = useMemo(() => withCityMeta(CITIES), [withCityMeta]);
+  const citiesWithMetaSimplified = useMemo(() => withCityMeta(CITIES_SIMPLIFIED), [withCityMeta]);
 
   // 사진 모드 진입 시 한반도 전체가 보이도록 줌아웃
   useEffect(() => {
     if (mapMode === 'photo') {
       mapRef.current?.animateCameraTo({ latitude: 36.4, longitude: 127.8, zoom: 6.3, duration: 500 });
+      photoLowDetailRef.current = true;
+      setPhotoLowDetail(true);
     }
   }, [mapMode]);
+
+  // 사진 모드에서 확대/축소가 끝날 때마다(제스처 도중이 아니라 멈췄을 때만) 배경 렌더링
+  // 정밀도와 뷰포트를 갱신 — 제스처 중에는 렌더 트리를 안 건드려야 드래그가 매끄러움
+  const handlePhotoCameraIdle = useCallback((params: { zoom?: number; region: Region }) => {
+    if (params.zoom != null) {
+      if (photoLowDetailRef.current && params.zoom >= PHOTO_LOD_ENTER_HIGH_ZOOM) {
+        photoLowDetailRef.current = false;
+        setPhotoLowDetail(false);
+      } else if (!photoLowDetailRef.current && params.zoom <= PHOTO_LOD_ENTER_LOW_ZOOM) {
+        photoLowDetailRef.current = true;
+        setPhotoLowDetail(true);
+      }
+    }
+
+    const { latitude, longitude, latitudeDelta, longitudeDelta } = params.region;
+    setPhotoVisibleRegion({
+      minLat: latitude, maxLat: latitude + latitudeDelta,
+      minLng: longitude, maxLng: longitude + longitudeDelta,
+    });
+  }, []);
+
+  const photoVisibleCities = useMemo(() => {
+    const source = photoLowDetail ? citiesWithMetaSimplified : citiesWithMeta;
+    const unvisited = source.filter((c) => !c.visited);
+    if (!photoVisibleRegion) return unvisited;
+    const padded = padBBox(photoVisibleRegion, PHOTO_VIEWPORT_PAD_RATIO);
+    return unvisited.filter((c) => {
+      const bbox = CITY_BBOX_MAP.get(c.code);
+      return bbox ? bboxIntersects(bbox, padded) : true;
+    });
+  }, [photoLowDetail, citiesWithMeta, citiesWithMetaSimplified, photoVisibleRegion]);
 
   // 방문 기록을 현재 시/군/구 데이터셋 기준으로 재계산 (세션당 1회, 데이터셋이 바뀌어도 항상 재확인)
   useEffect(() => {
@@ -239,6 +302,108 @@ export default function MapScreen() {
       loadVisitedCities();
     })();
   }, [mapMode, pastLines, loadVisitedCities]);
+
+  const pickCityPhoto = async (cityId: string, cityCode: string, polygons: LatLng[][]) => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('권한 필요', '사진 라이브러리 접근 권한이 필요해요.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.9,
+    });
+
+    if (result.canceled) return;
+    setCropTarget({ cityId, cityCode, imageUri: result.assets[0].uri, polygons });
+  };
+
+  const uploadCroppedCityPhoto = async (cityId: string, cityCode: string, croppedUri: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const user = session.user;
+
+    setPhotoUploading(cityCode);
+    try {
+      const path = `${user.id}/${cityId}.png`;
+
+      const formData = new FormData();
+      formData.append('file', { uri: croppedUri, name: 'photo.png', type: 'image/png' } as any);
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
+        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+        xhr.setRequestHeader('x-upsert', 'true');
+        xhr.onload = () => {
+          if (xhr.status < 300) resolve();
+          else { try { reject(new Error(JSON.parse(xhr.responseText).message)); } catch { reject(new Error('업로드 실패')); } }
+        };
+        xhr.onerror = () => reject(new Error('네트워크 오류'));
+        xhr.send(formData);
+      });
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('city-photos')
+        .getPublicUrl(path);
+
+      const { url: clippedUrl, error: clipError } = await clipAndUploadCityPhoto({
+        cityCode, storagePath: path, publicUrl,
+      });
+      if (clipError) console.warn('clip-city-photo failed:', clipError);
+
+      const { error: updateError } = await supabase
+        .from('visited_cities')
+        .update({ photo_url: clippedUrl })
+        .eq('id', cityId);
+      if (updateError) throw updateError;
+
+      setVisitedCities((prev) => prev.map((c) => c.id === cityId ? { ...c, photo_url: clippedUrl } : c));
+    } catch (e: any) {
+      Alert.alert('업로드 실패', e.message ?? String(e));
+    } finally {
+      setPhotoUploading(null);
+    }
+  };
+
+  const deleteCityPhoto = async (cityId: string) => {
+    await supabase.from('visited_cities').update({ photo_url: null }).eq('id', cityId);
+    setVisitedCities((prev) => prev.map((c) => c.id === cityId ? { ...c, photo_url: null } : c));
+  };
+
+  const showCityPhotoOptions = (city: typeof citiesWithMeta[number]) => {
+    if (!city.visited || !city.visitedId) {
+      Alert.alert(city.name, '아직 방문하지 않은 지역이에요. 주행 기록이 있어야 사진을 등록할 수 있어요.');
+      return;
+    }
+    const visitedId = city.visitedId;
+
+    const buttons: any[] = [];
+    if (city.photoUrl) {
+      buttons.push({ text: '사진 변경', onPress: () => pickCityPhoto(visitedId, city.code, city.polygons) });
+      buttons.push({ text: '사진 삭제', style: 'destructive', onPress: () => deleteCityPhoto(visitedId) });
+    } else {
+      buttons.push({ text: '사진 등록', onPress: () => pickCityPhoto(visitedId, city.code, city.polygons) });
+    }
+    buttons.push({ text: '취소', style: 'cancel' });
+    Alert.alert(city.name, undefined, buttons);
+  };
+
+  const handleMapLongPress = (event: HandlerStateChangeEvent<LongPressGestureHandlerEventPayload>) => {
+    if (mapMode !== 'photo' || event.nativeEvent.state !== State.ACTIVE) return;
+    const { x, y } = event.nativeEvent;
+
+    (async () => {
+      const result = await mapRef.current?.screenToCoordinate({ screenX: x, screenY: y });
+      if (!result?.isValid) return;
+
+      const city = matchCity({ latitude: result.latitude, longitude: result.longitude }, CITY_INDEX);
+      if (!city) return;
+
+      const meta = citiesWithMeta.find((c) => c.code === city.code);
+      if (meta) showCityPhotoOptions(meta);
+    })();
+  };
 
   const openZeroHundred = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -399,6 +564,12 @@ export default function MapScreen() {
 
   return (
     <View style={s.container}>
+      <LongPressGestureHandler
+        onHandlerStateChange={handleMapLongPress}
+        minDurationMs={500}
+        enabled={mapMode === 'photo'}
+      >
+      <View style={s.map}>
       <NaverMapView
         ref={mapRef}
         style={[s.map, mapMode === 'photo' && s.mapPhotoMode]}
@@ -415,6 +586,7 @@ export default function MapScreen() {
           circleOutlineWidth: 1,
           circleOutlineColor: 'rgba(0, 120, 255, 0.25)',
         } : { isVisible: false }}
+        onCameraIdle={mapMode === 'photo' ? handlePhotoCameraIdle : undefined}
       >
         {mapMode === 'drive' && (
           <>
@@ -438,28 +610,44 @@ export default function MapScreen() {
           </>
         )}
 
-        {mapMode === 'photo' && citiesWithMeta.map((c) => (
+        {mapMode === 'photo' && (
           <>
-            {c.polygons.map((coords, i) => (
-              <NaverMapPolygonOverlay
-                key={`poly-${c.code}-${i}`}
-                coords={coords}
-                color={c.visited ? `${c.color}F2` : `${c.color}B3`}
-                outlineWidth={c.visited ? 1.75 : 1}
-                outlineColor={c.visited ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'}
-              />
-            ))}
-            {c.photoUrl && (
-              <NaverMapGroundOverlay
-                key={`photo-${c.code}`}
-                globalZIndex={1}
-                image={{ httpUri: c.photoUrl }}
-                region={CITY_REGION_MAP.get(c.code)!}
-              />
+            {photoVisibleCities.flatMap((c) =>
+              c.polygons.map((coords, i) => (
+                <NaverMapPolygonOverlay
+                  key={`poly-${c.code}-${i}`}
+                  coords={coords}
+                  color={`${c.color}B3`}
+                  outlineWidth={1}
+                  outlineColor="rgba(255,255,255,0.5)"
+                />
+              ))
             )}
+
+            {citiesWithMeta.filter((c) => c.visited).flatMap((c) => [
+              ...c.polygons.map((coords, i) => (
+                <NaverMapPolygonOverlay
+                  key={`visited-poly-${c.code}-${i}`}
+                  coords={coords}
+                  color={`${c.color}F2`}
+                  outlineWidth={1.75}
+                  outlineColor="rgba(255,255,255,0.95)"
+                />
+              )),
+              ...(c.photoUrl ? [
+                <NaverMapGroundOverlay
+                  key={`photo-${c.code}`}
+                  globalZIndex={1}
+                  image={{ httpUri: c.photoUrl }}
+                  region={CITY_REGION_MAP.get(c.code)!}
+                />
+              ] : []),
+            ])}
           </>
-        ))}
+        )}
       </NaverMapView>
+      </View>
+      </LongPressGestureHandler>
 
       {/* 모드 토글 */}
       <View style={s.modeToggle}>
@@ -501,6 +689,25 @@ export default function MapScreen() {
           )}
         </>
       )}
+
+      {mapMode === 'photo' && photoUploading && (
+        <View style={s.uploadingBadge}>
+          <ActivityIndicator size="small" color="#fff" />
+          <Text style={s.uploadingText}>사진 업로드 중...</Text>
+        </View>
+      )}
+
+      <CityPhotoCropper
+        visible={!!cropTarget}
+        imageUri={cropTarget?.imageUri ?? null}
+        polygons={cropTarget?.polygons ?? []}
+        onCancel={() => setCropTarget(null)}
+        onConfirm={(uri) => {
+          const target = cropTarget;
+          setCropTarget(null);
+          if (target) uploadCroppedCityPhoto(target.cityId, target.cityCode, uri);
+        }}
+      />
 
       {/* 제로백 측정 모달 */}
       <Modal visible={zhVisible} animationType="fade" transparent onRequestClose={closeZeroHundred}>
@@ -599,6 +806,19 @@ const s = StyleSheet.create({
     borderRadius: 20,
   },
   recordingText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  uploadingBadge: {
+    position: 'absolute',
+    bottom: 48,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(4,120,87,0.9)',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  uploadingText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 
   zhBtn: {
     position: 'absolute',
