@@ -41,6 +41,9 @@ let coordCount = 0;
 // 정차 감지
 let lastMovingTimestamp: number | null = null;
 let idleNotificationSent = false;
+// 지하주차장 등 GPS 신호 자체가 끊기면 위 정차 감지가 아예 실행되지 않으므로
+// (새 위치가 안 들어오니 콜백도 안 도는 상태) 마지막으로 위치를 받은 시각을 따로 추적
+let lastLocationReceivedAt: number | null = null;
 
 // 최고 속도 (m/s)
 let maxSpeedMs = 0;
@@ -105,6 +108,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
   if (!data?.locations?.length) return;
 
   const now = Date.now();
+  lastLocationReceivedAt = now;
   for (const loc of data.locations) {
     const coord: Coordinate = {
       longitude: loc.coords.longitude,
@@ -208,6 +212,7 @@ function resetDriveState() {
   driveCoords.length = 0;
   lastMovingTimestamp = null;
   idleNotificationSent = false;
+  lastLocationReceivedAt = null;
   maxSpeedMs = 0;
 }
 
@@ -234,11 +239,20 @@ export async function cleanupOrphanedDrives(): Promise<void> {
   if (isTracking()) return;
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user) return;
-  await supabase
-    .from('drives')
-    .update({ ended_at: new Date().toISOString(), distance_km: 0 })
-    .eq('user_id', session.user.id)
-    .is('ended_at', null);
+  // GPS 신호 유실로 미종료 상태로 남은 주행을 정리. route_points에 남은 기록으로
+  // 실제 거리/최고속도/종료시각을 복원한다 (예전엔 distance_km을 0으로 밀어버렸음).
+  await supabase.rpc('close_orphaned_drives', { p_user_id: session.user.id });
+}
+
+// GPS 신호가 완전히 끊기면(지하주차장 등) LOCATION_TASK 콜백 자체가 안 돌아서
+// 정차 알림/자동종료 로직이 실행될 기회가 없음. 앱이 포그라운드로 돌아올 때마다
+// 마지막으로 위치를 받은 실제 시각(wall clock) 기준으로 따로 확인해 이 사각지대를 보완.
+export async function checkStaleTrackingOnForeground(): Promise<void> {
+  if (!isTracking() || lastLocationReceivedAt == null) return;
+  const elapsed = Date.now() - lastLocationReceivedAt;
+  if (elapsed >= AUTO_STOP_MS) {
+    await stopTracking();
+  }
 }
 
 export async function startTracking(): Promise<boolean> {
@@ -271,6 +285,7 @@ export async function startTracking(): Promise<boolean> {
 
   driveId = drive.id;
   resetDriveState();
+  lastLocationReceivedAt = Date.now();
 
   // MONITOR_TASK 중지 (주행 중엔 감지 불필요)
   const monitorRunning = await Location.hasStartedLocationUpdatesAsync(MONITOR_TASK);

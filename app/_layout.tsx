@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Linking } from 'react-native';
+import { AppState, Linking } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -10,6 +10,7 @@ import { supabase } from '../src/services/supabase';
 import {
   startTracking, stopTracking, isTracking,
   cleanupOrphanedDrives, resetIdleTimer, startMonitoring,
+  checkStaleTrackingOnForeground,
   DRIVE_IDLE_CATEGORY, DRIVE_DETECT_CATEGORY, setActiveTripId,
 } from '../src/services/locationTracker';
 
@@ -113,10 +114,17 @@ export default function RootLayout() {
       setTimeout(() => handleAuthSession(session), 0);
     });
 
+    // GPS 신호 유실(지하주차장 등)로 정차 감지가 멈춘 주행을 포그라운드 복귀 시마다 확인
+    checkStaleTrackingOnForeground();
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkStaleTrackingOnForeground();
+    });
+
     return () => {
       notifSub.remove();
       linkSub.remove();
       subscription.unsubscribe();
+      appStateSub.remove();
     };
   }, []);
 
