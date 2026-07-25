@@ -79,6 +79,18 @@ const ZH_GPS_LAG_OFFSET_MS = 980;
 // 섞여 최근 가속 국면과 무관해지고, 너무 작으면 GPS 노이즈에 취약해짐
 const ZH_RATE_WINDOW_SEGMENTS = 4;
 
+// 주행 경로선 굵기가 줌 레벨과 무관하게 고정이라 확대해도 선이 얇아 보이던 문제 보정.
+// 기준 줌(현재 굵기 값들이 설계된 지점) 대비 줌 1당 굵기를 비례 확대/축소함
+const ROUTE_WIDTH_BASE_ZOOM = 14;
+const ROUTE_WIDTH_SCALE_PER_ZOOM = 0.28;
+const ROUTE_WIDTH_MIN_SCALE = 0.6;
+const ROUTE_WIDTH_MAX_SCALE = 2.6;
+
+function routeWidthScale(zoom: number): number {
+  const scale = 1 + (zoom - ROUTE_WIDTH_BASE_ZOOM) * ROUTE_WIDTH_SCALE_PER_ZOOM;
+  return Math.min(ROUTE_WIDTH_MAX_SCALE, Math.max(ROUTE_WIDTH_MIN_SCALE, scale));
+}
+
 export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
   const isFirstPoint = useRef(true);
@@ -97,6 +109,7 @@ export default function MapScreen() {
   const [photoLowDetail, setPhotoLowDetail] = useState(true);
   const photoLowDetailRef = useRef(true);
   const [photoVisibleRegion, setPhotoVisibleRegion] = useState<BBox | null>(null);
+  const [driveZoom, setDriveZoom] = useState(ROUTE_WIDTH_BASE_ZOOM);
 
   // 제로백 측정
   type ZHState = 'ready' | 'measuring' | 'done';
@@ -273,6 +286,11 @@ export default function MapScreen() {
       minLat: latitude, maxLat: latitude + latitudeDelta,
       minLng: longitude, maxLng: longitude + longitudeDelta,
     });
+  }, []);
+
+  // 주행 모드에서 줌 레벨이 바뀔 때마다(제스처 멈췄을 때만) 경로선 굵기 재계산
+  const handleDriveCameraIdle = useCallback((params: { zoom?: number }) => {
+    if (params.zoom != null) setDriveZoom(params.zoom);
   }, []);
 
   const photoVisibleCities = useMemo(() => {
@@ -596,7 +614,10 @@ export default function MapScreen() {
           circleOutlineWidth: 1,
           circleOutlineColor: 'rgba(0, 120, 255, 0.25)',
         } : { isVisible: false }}
-        onCameraIdle={mapMode === 'photo' ? handlePhotoCameraIdle : undefined}
+        onCameraIdle={
+          mapMode === 'photo' ? handlePhotoCameraIdle :
+          mapMode === 'drive' ? handleDriveCameraIdle : undefined
+        }
       >
         {mapMode === 'drive' && (
           <>
@@ -606,8 +627,8 @@ export default function MapScreen() {
                 coords={seg.coords}
                 color={seg.color}
                 outlineColor="rgba(255,255,255,0.55)"
-                outlineWidth={1.5}
-                width={seg.width}
+                outlineWidth={1.5 * routeWidthScale(driveZoom)}
+                width={seg.width * routeWidthScale(driveZoom)}
               />
             ))}
             {routeCoords.length >= 2 && (
@@ -615,8 +636,8 @@ export default function MapScreen() {
                 coords={routeCoords}
                 color="#00D084"
                 outlineColor="rgba(255,255,255,0.9)"
-                outlineWidth={2.5}
-                width={7}
+                outlineWidth={2.5 * routeWidthScale(driveZoom)}
+                width={7 * routeWidthScale(driveZoom)}
               />
             )}
           </>
