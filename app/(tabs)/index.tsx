@@ -72,7 +72,12 @@ const PHOTO_LOD_ENTER_LOW_ZOOM = 6.6;  // 이 이하 축소 시 단순화된 데
 const PHOTO_VIEWPORT_PAD_RATIO = 0.3;  // 화면 경계에서 지역이 갑자기 나타나지 않도록 여유분
 
 // GPS speed가 실제 순간속도보다 지연 반영되는 만큼 보정 (실측 페어 2건 평균: 0.65s, 0.70s)
-const ZH_GPS_LAG_OFFSET_MS = 680;
+// 실측 대비 여전히 0.2~0.3s 느리게 나와 추가 보정. 오차가 남더라도 실제보다 느리게 나오는
+// 것보단 빠르게 나오는 쪽이 사용자 체감이 낫다고 판단해 범위의 상단(0.3s)으로 반영
+const ZH_GPS_LAG_OFFSET_MS = 980;
+// 100km/h 교차 시점 추정에 쓰는 가속률을 최근 몇 구간 평균으로 낼지. 너무 크면 초반 저속 구간까지
+// 섞여 최근 가속 국면과 무관해지고, 너무 작으면 GPS 노이즈에 취약해짐
+const ZH_RATE_WINDOW_SEGMENTS = 4;
 
 export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
@@ -192,11 +197,12 @@ export default function MapScreen() {
       freqMap.get(`${Math.round(lat * 1000)},${Math.round(lng * 1000)}`) ?? 1;
 
     // 단일 그린 계열 그라데이션(연한 세이지 → 짙은 포레스트)으로 통일 — 채도 다른 색 섞이는 것보다 차분한 인상
+    // 흰 테두리(outline)를 둘러 지도 배경과 대비를 주고 입체감 있게 표현
     const freqStyle = (freq: number): { color: string; width: number } => {
-      if (freq >= 7) return { color: '#0B4A34', width: 6 };  // 짙은 포레스트 (7회+)
-      if (freq >= 4) return { color: '#1F6E4F', width: 5 };  // 진한 에메랄드 (4-6회)
-      if (freq >= 2) return { color: '#5B9279', width: 4 };  // 세이지 그린 (2-3회)
-      return { color: '#A8C3B4', width: 3 };                 // 연한 세이지 (1회)
+      if (freq >= 7) return { color: '#0B4A34', width: 7 };  // 짙은 포레스트 (7회+)
+      if (freq >= 4) return { color: '#1F6E4F', width: 6 };  // 진한 에메랄드 (4-6회)
+      if (freq >= 2) return { color: '#5B9279', width: 5 };  // 세이지 그린 (2-3회)
+      return { color: '#A8C3B4', width: 4 };                 // 연한 세이지 (1회)
     };
 
     const segments: Array<{ coords: LatLng[]; color: string; width: number }> = [];
@@ -477,10 +483,10 @@ export default function MapScreen() {
         if (zhStateRef.current === 'measuring' && kmh >= 100 && zhStartRef.current) {
           if (zhTimerRef.current) { clearInterval(zhTimerRef.current); zhTimerRef.current = null; }
 
-          // 이전 구간 평균 가속 비율로 100km/h 교차 시점 추정
+          // 최근 N구간 평균 가속 비율로 100km/h 교차 시점 추정
           let endTs = ts;
           if (prevKmh < 100 && prevTs > 0) {
-            const prevSamples = gpsHistory.slice(0, -1);
+            const prevSamples = gpsHistory.slice(0, -1).slice(-(ZH_RATE_WINDOW_SEGMENTS + 1));
             const deltas: number[] = [];
             for (let i = 1; i < prevSamples.length; i++) {
               const dKmh = prevSamples[i].kmh - prevSamples[i - 1].kmh;
@@ -595,7 +601,8 @@ export default function MapScreen() {
                 key={`heat-${i}`}
                 coords={seg.coords}
                 color={seg.color}
-                outlineColor="transparent"
+                outlineColor="rgba(255,255,255,0.55)"
+                outlineWidth={1.5}
                 width={seg.width}
               />
             ))}
@@ -603,8 +610,9 @@ export default function MapScreen() {
               <NaverMapPathOverlay
                 coords={routeCoords}
                 color="#00D084"
-                outlineColor="transparent"
-                width={5}
+                outlineColor="rgba(255,255,255,0.9)"
+                outlineWidth={2.5}
+                width={7}
               />
             )}
           </>
