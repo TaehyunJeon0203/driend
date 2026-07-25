@@ -118,7 +118,6 @@ export default function MapScreen() {
   const [zhSpeed, setZhSpeed] = useState(0);
   const [zhResult, setZhResult] = useState<number | null>(null);
   const [zhTimer, setZhTimer] = useState(0);
-  const [zhGpsInterval, setZhGpsInterval] = useState<number | null>(null);
   const zhStateRef = useRef<ZHState>('ready');
   const zhStartRef = useRef<number | null>(null);
   const zhSubRef = useRef<Location.LocationSubscription | null>(null);
@@ -442,7 +441,6 @@ export default function MapScreen() {
     setZhState('ready');
     setZhSpeed(0);
     setZhTimer(0);
-    setZhGpsInterval(null);
     setZhResult(null);
     setZhVisible(true);
 
@@ -489,7 +487,6 @@ export default function MapScreen() {
       { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 0 },
       (loc) => {
         const cbNow = Date.now();
-        if (lastGpsCbTs > 0) setZhGpsInterval(cbNow - lastGpsCbTs);
         lastGpsCbTs = cbNow;
 
         const kmh = Math.max(0, (loc.coords.speed ?? 0) * 3.6);
@@ -768,10 +765,6 @@ export default function MapScreen() {
               <Text style={s.zhSpeedNum}>{zhSpeed}<Text style={s.zhSpeedUnit}> km/h</Text></Text>
             )}
 
-            {zhGpsInterval && (
-              <Text style={s.zhDebug}>GPS {zhGpsInterval}ms · {(1000 / zhGpsInterval).toFixed(1)}Hz</Text>
-            )}
-
             <TouchableOpacity style={s.zhCloseBtn} onPress={closeZeroHundred}>
               <Text style={s.zhCloseText}>닫기</Text>
             </TouchableOpacity>
@@ -891,7 +884,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 28, paddingVertical: 12, borderRadius: 20,
   },
   zhRetryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  zhDebug: { fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 4 },
   zhCloseBtn: { marginTop: 12 },
   zhCloseText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
 });

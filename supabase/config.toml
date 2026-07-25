@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.terms-of-service]
 verify_jwt = false
+
+[functions.support]
+verify_jwt = false
