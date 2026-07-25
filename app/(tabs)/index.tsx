@@ -353,10 +353,14 @@ export default function MapScreen() {
         .from('city-photos')
         .getPublicUrl(path);
 
-      const { url: clippedUrl, error: clipError } = await clipAndUploadCityPhoto({
+      const { url: rawUrl, error: clipError } = await clipAndUploadCityPhoto({
         cityCode, storagePath: path, publicUrl,
       });
       if (clipError) console.warn('clip-city-photo failed:', clipError);
+
+      // 클리핑 결과는 항상 같은 스토리지 경로에 덮어써져 URL이 재업로드해도 동일함 —
+      // 캐시버스터가 없으면 지도 오버레이/CDN이 예전 이미지를 계속 보여줌
+      const clippedUrl = `${rawUrl}?v=${Date.now()}`;
 
       const { error: updateError } = await supabase
         .from('visited_cities')
