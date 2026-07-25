@@ -40,6 +40,24 @@ function formatDate(iso: string) {
   return `${d.getMonth() + 1}.${d.getDate()}`;
 }
 
+const MONTHLY_CHART_MONTHS = 5;
+
+function lastNMonths(n: number): string[] {
+  const out: string[] = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+// 주행 기록이 있는 달만 내려오는 RPC 결과를 최근 n개월 축으로 채워, 기록 없는 달도 낮은 막대로 보이게 함
+function fillMonths(data: MonthlyData[], n: number): MonthlyData[] {
+  const byMonth = new Map(data.map((m) => [m.month, m.distance_km]));
+  return lastNMonths(n).map((month) => ({ month, distance_km: byMonth.get(month) ?? 0 }));
+}
+
 export default function StatsScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [bestZeroHundred, setBestZeroHundred] = useState<number | null>(null);
@@ -79,7 +97,7 @@ export default function StatsScreen() {
 
       if (statsRes.data?.[0]) setStats(statsRes.data[0]);
       if (profileRes.data?.best_zero_to_hundred_s) setBestZeroHundred(profileRes.data.best_zero_to_hundred_s);
-      if (monthlyRes.data) setMonthly(monthlyRes.data);
+      setMonthly(fillMonths(monthlyRes.data ?? [], MONTHLY_CHART_MONTHS));
       if (drivesRes.data) setDrives(drivesRes.data);
       if (citiesRes.data) setCities(citiesRes.data);
       if (tripsRes.data) {
@@ -431,21 +449,17 @@ export default function StatsScreen() {
       {/* 월별 그래프 */}
       <View style={s.card}>
         <Text style={s.cardTitle}>월별 주행 거리</Text>
-        {monthly.length === 0 ? (
-          <Text style={s.empty}>주행 기록이 없어요</Text>
-        ) : (
-          <View style={s.chart}>
-            {monthly.map((m) => (
-              <View key={m.month} style={s.barCol}>
-                <Text style={s.barVal}>{formatKm(m.distance_km)}</Text>
-                <View style={s.barTrack}>
-                  <View style={[s.bar, { height: Math.max((m.distance_km / maxKm) * BAR_MAX_H, 3) }]} />
-                </View>
-                <Text style={s.barLbl}>{Number(m.month.split('-')[1])}월</Text>
+        <View style={s.chart}>
+          {monthly.map((m) => (
+            <View key={m.month} style={s.barCol}>
+              <Text style={s.barVal}>{formatKm(m.distance_km)}</Text>
+              <View style={s.barTrack}>
+                <View style={[s.bar, { height: Math.max((m.distance_km / maxKm) * BAR_MAX_H, 3) }]} />
               </View>
-            ))}
-          </View>
-        )}
+              <Text style={s.barLbl}>{Number(m.month.split('-')[1])}월</Text>
+            </View>
+          ))}
+        </View>
       </View>
 
       {/* 최근 주행 */}
