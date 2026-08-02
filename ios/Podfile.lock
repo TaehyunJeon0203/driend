@@ -52,6 +52,8 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - ExpoAppleAuthentication (56.0.4):
+    - ExpoModulesCore
   - ExpoAsset (56.0.17):
     - ExpoModulesCore
   - ExpoDomWebView (56.0.5):
@@ -2229,6 +2231,7 @@ DEPENDENCIES:
   - EXApplication (from `../node_modules/expo-application/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - Expo (from `../node_modules/expo`)
+  - ExpoAppleAuthentication (from `../node_modules/expo-apple-authentication/ios`)
   - ExpoAsset (from `../node_modules/expo/node_modules/expo-asset/ios`)
   - "ExpoDomWebView (from `../node_modules/@expo/dom-webview/ios`)"
   - ExpoFileSystem (from `../node_modules/expo/node_modules/expo-file-system/ios`)
@@ -2354,6 +2357,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-constants/ios"
   Expo:
     :path: "../node_modules/expo"
+  ExpoAppleAuthentication:
+    :path: "../node_modules/expo-apple-authentication/ios"
   ExpoAsset:
     :path: "../node_modules/expo/node_modules/expo-asset/ios"
   ExpoDomWebView:
@@ -2572,6 +2577,7 @@ SPEC CHECKSUMS:
   EXApplication: e6040c92edc5522accd62852342e6b14742d42c0
   EXConstants: f4ab3bf7484c483fc65f15d1d92c5ae4f6d56874
   Expo: 885ec78d4827b0abf9b87c0a0308fbdf00ef8b8a
+  ExpoAppleAuthentication: 3dd8ddd3016396a8171f06af8cc5e3e008e8eaf4
   ExpoAsset: 1e436e9aee7015d5c6d203c1ddfe1adbb521a623
   ExpoDomWebView: 27205be8754f9992913b8a9a08e65019f2207075
   ExpoFileSystem: 9dc04ec1e11bc3c7b965d7feb2de12c789755c7b

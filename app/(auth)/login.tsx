@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,45 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { login } from '@react-native-kakao/user';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { supabase } from '../../src/services/supabase';
 import { colors } from '../../src/theme';
 
 export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isKakaoLoading, setIsKakaoLoading] = useState(false);
+  const [isAppleLoading, setIsAppleLoading] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
+  useEffect(() => {
+    AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
+
+  const handleAppleLogin = async () => {
+    setIsAppleLoading(true);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) throw new Error('Apple 인증 토큰을 받지 못했습니다.');
+
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (error) throw error;
+
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      if (error.code === 'ERR_REQUEST_CANCELED') return;
+      Alert.alert('Apple 로그인 실패', error.message ?? '다시 시도해주세요.');
+    } finally {
+      setIsAppleLoading(false);
+    }
+  };
 
   const handleKakaoLogin = async () => {
     setIsKakaoLoading(true);
@@ -69,6 +102,16 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.bottom}>
+        {appleAvailable && (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={14}
+            style={[styles.appleButton, isAppleLoading && styles.disabled]}
+            onPress={handleAppleLogin}
+          />
+        )}
+
         <TouchableOpacity
           style={[styles.kakaoButton, isKakaoLoading && styles.disabled]}
           onPress={handleKakaoLogin}
@@ -103,6 +146,9 @@ const styles = StyleSheet.create({
   logo: { fontSize: 52, fontWeight: 'bold', color: colors.primary },
   subtitle: { fontSize: 17, color: '#888', textAlign: 'center', lineHeight: 26 },
   bottom: { padding: 32, paddingBottom: 48, gap: 12 },
+  appleButton: {
+    height: 54,
+  },
   kakaoButton: {
     backgroundColor: '#FEE500',
     borderRadius: 14,

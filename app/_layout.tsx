@@ -51,7 +51,8 @@ async function handleAuthSession(session: Session | null) {
     .select('id')
     .eq('id', session.user.id)
     .single();
-  if (!profile) {
+  const isNewUser = !profile;
+  if (isNewUser) {
     await supabase.from('profiles').insert({
       id: session.user.id,
       username: session.user.user_metadata?.nickname ?? `user_${session.user.id.slice(0, 6)}`,
@@ -66,7 +67,7 @@ async function handleAuthSession(session: Session | null) {
     .is('ended_at', null)
     .maybeSingle();
   setActiveTripId(activeTrip?.id ?? null);
-  router.replace('/(tabs)');
+  router.replace(isNewUser ? '/(auth)/onboarding' : '/(tabs)');
 }
 
 export default function RootLayout() {

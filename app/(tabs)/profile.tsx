@@ -13,17 +13,21 @@ import {
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Profile = { id: string; username: string };
-type Vehicle = { id: string; name: string; bt_device_name: string | null };
+type Vehicle = { id: string; make: string | null; name: string; bt_device_name: string | null };
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleName, setVehicleName] = useState('');
   const [btDeviceName, setBtDeviceName] = useState('');
   const [editingVehicle, setEditingVehicle] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [isKakaoUser, setIsKakaoUser] = useState(false);
+  const [accountType, setAccountType] = useState<'kakao' | 'apple' | 'anonymous'>('anonymous');
+  const [editingNickname, setEditingNickname] = useState(false);
+  const [nicknameInput, setNicknameInput] = useState('');
+  const [savingNickname, setSavingNickname] = useState(false);
   const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -35,15 +39,20 @@ export default function ProfileScreen() {
 
       const [profileRes, vehicleRes, detectVal] = await Promise.all([
         supabase.from('profiles').select('id, username').eq('id', user.id).single(),
-        supabase.from('vehicles').select('id, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
+        supabase.from('vehicles').select('id, make, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
         AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY),
       ]);
 
       setDriveDetectEnabled(detectVal === 'true');
-      setIsKakaoUser(!!user.user_metadata?.kakao_id);
+      setAccountType(
+        user.user_metadata?.kakao_id ? 'kakao' :
+        user.app_metadata?.provider === 'apple' ? 'apple' :
+        'anonymous'
+      );
       if (profileRes.data) setProfile(profileRes.data);
       if (vehicleRes.data) {
         setVehicle(vehicleRes.data);
+        setVehicleMake(vehicleRes.data.make ?? '');
         setVehicleName(vehicleRes.data.name ?? '');
         setBtDeviceName(vehicleRes.data.bt_device_name ?? '');
       }
@@ -55,6 +64,7 @@ export default function ProfileScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const startEditing = () => {
+    setVehicleMake(vehicle?.make ?? '');
     setVehicleName(vehicle?.name ?? '');
     setBtDeviceName(vehicle?.bt_device_name ?? '');
     setEditingVehicle(true);
@@ -67,20 +77,19 @@ export default function ProfileScreen() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return;
 
-    const payload = {
-      user_id: session.user.id,
+    const fields = {
+      make: vehicleMake.trim() || null,
       name: vehicleName.trim(),
       bt_device_name: btDeviceName.trim() || null,
     };
     let error;
 
     if (vehicle) {
-      ({ error } = await supabase.from('vehicles').update({
-        name: vehicleName.trim(),
-        bt_device_name: btDeviceName.trim() || null,
-      }).eq('id', vehicle.id));
+      ({ error } = await supabase.from('vehicles').update(fields).eq('id', vehicle.id));
     } else {
-      const res = await supabase.from('vehicles').insert(payload).select('id, name, bt_device_name').single();
+      const res = await supabase.from('vehicles')
+        .insert({ user_id: session.user.id, ...fields })
+        .select('id, make, name, bt_device_name').single();
       error = res.error;
       if (res.data) setVehicle(res.data);
     }
@@ -88,13 +97,39 @@ export default function ProfileScreen() {
     if (error) {
       Alert.alert('오류', error.message);
     } else {
-      setVehicle((v) => v
-        ? { ...v, name: vehicleName.trim(), bt_device_name: btDeviceName.trim() || null }
-        : { id: '', name: vehicleName.trim(), bt_device_name: btDeviceName.trim() || null }
-      );
+      setVehicle((v) => v ? { ...v, ...fields } : { id: '', ...fields });
       setEditingVehicle(false);
     }
     setSaving(false);
+  };
+
+  const startEditingNickname = () => {
+    setNicknameInput(profile?.username ?? '');
+    setEditingNickname(true);
+  };
+
+  const saveNickname = async () => {
+    if (!nicknameInput.trim()) return;
+    setSavingNickname(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) { setSavingNickname(false); return; }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ username: nicknameInput.trim() })
+      .eq('id', session.user.id);
+
+    if (error) {
+      Alert.alert(
+        error.code === '23505' ? '닉네임 중복' : '오류',
+        error.code === '23505' ? '이미 사용 중인 닉네임이에요.' : error.message
+      );
+    } else {
+      setProfile((p) => p ? { ...p, username: nicknameInput.trim() } : p);
+      setEditingNickname(false);
+    }
+    setSavingNickname(false);
   };
 
   const toggleDriveDetect = async (value: boolean) => {
@@ -195,8 +230,38 @@ export default function ProfileScreen() {
         <View style={s.avatarCircle}>
           <Text style={s.avatarText}>{(profile?.username ?? '?')[0].toUpperCase()}</Text>
         </View>
-        <Text style={s.username}>{profile?.username ?? '게스트'}</Text>
-        <Text style={s.userSub}>{isKakaoUser ? '카카오 계정' : '익명 계정'}</Text>
+        {editingNickname ? (
+          <View style={s.nicknameEditGroup}>
+            <TextInput
+              style={s.nicknameInput}
+              value={nicknameInput}
+              onChangeText={setNicknameInput}
+              placeholder="닉네임"
+              placeholderTextColor={colors.textTertiary}
+              maxLength={20}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={saveNickname}
+            />
+            <View style={s.nicknameEditActions}>
+              <TouchableOpacity onPress={() => setEditingNickname(false)}>
+                <Text style={s.nicknameCancel}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveNickname} disabled={savingNickname}>
+                {savingNickname
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <Text style={s.nicknameSave}>저장</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={startEditingNickname}>
+            <Text style={s.username}>{profile?.username ?? '게스트'} <Text style={s.editBtn}>수정</Text></Text>
+          </TouchableOpacity>
+        )}
+        <Text style={s.userSub}>
+          {accountType === 'kakao' ? '카카오 계정' : accountType === 'apple' ? 'Apple 계정' : '익명 계정'}
+        </Text>
       </View>
 
       {/* 내 차량 */}
@@ -212,14 +277,23 @@ export default function ProfileScreen() {
 
         {editingVehicle ? (
           <View style={s.editGroup}>
+            <Text style={s.fieldLabel}>제조사</Text>
+            <TextInput
+              style={s.input}
+              value={vehicleMake}
+              onChangeText={setVehicleMake}
+              placeholder="예: 현대"
+              placeholderTextColor={colors.textTertiary}
+              autoFocus
+              returnKeyType="next"
+            />
             <Text style={s.fieldLabel}>차량 이름</Text>
             <TextInput
               style={s.input}
               value={vehicleName}
               onChangeText={setVehicleName}
-              placeholder="예: 2023 현대 아반떼"
+              placeholder="예: 아반떼"
               placeholderTextColor={colors.textTertiary}
-              autoFocus
               returnKeyType="next"
             />
             {Platform.OS === 'android' && (
@@ -249,7 +323,7 @@ export default function ProfileScreen() {
           </View>
         ) : vehicle ? (
           <View style={s.vehicleInfo}>
-            <Text style={s.vehicleName}>{vehicle.name}</Text>
+            <Text style={s.vehicleName}>{vehicle.make ? `${vehicle.make} ${vehicle.name}` : vehicle.name}</Text>
             {Platform.OS === 'android' && vehicle.bt_device_name && (
               <Text style={s.btDeviceName}>BT: {vehicle.bt_device_name}</Text>
             )}
@@ -336,6 +410,16 @@ const s = StyleSheet.create({
   avatarText: { fontSize: 28, fontWeight: '700', color: '#fff' },
   username: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   userSub: { ...typography.label, textAlign: 'center' },
+
+  nicknameEditGroup: { gap: spacing.xs },
+  nicknameInput: {
+    height: 44, borderRadius: radius.sm,
+    backgroundColor: colors.background, paddingHorizontal: spacing.sm,
+    fontSize: 16, color: colors.text, textAlign: 'center',
+  },
+  nicknameEditActions: { flexDirection: 'row', justifyContent: 'center', gap: spacing.md },
+  nicknameCancel: { fontSize: 14, color: colors.textSecondary },
+  nicknameSave: { fontSize: 14, fontWeight: '600', color: colors.primary },
 
   vehicleInfo: { gap: 4 },
   vehicleName: { fontSize: 17, fontWeight: '600', color: colors.text },
