@@ -12,7 +12,7 @@ import {
 } from '../../src/services/locationTracker';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
-type Profile = { id: string; username: string };
+type Profile = { id: string; username: string; best_zero_to_hundred_s: number | null };
 type Vehicle = { id: string; make: string | null; name: string; bt_device_name: string | null };
 
 export default function ProfileScreen() {
@@ -30,6 +30,7 @@ export default function ProfileScreen() {
   const [savingNickname, setSavingNickname] = useState(false);
   const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [bestSpeedKmh, setBestSpeedKmh] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -37,10 +38,11 @@ export default function ProfileScreen() {
       if (!session?.user) return;
       const user = session.user;
 
-      const [profileRes, vehicleRes, detectVal] = await Promise.all([
-        supabase.from('profiles').select('id, username').eq('id', user.id).single(),
+      const [profileRes, vehicleRes, detectVal, statsRes] = await Promise.all([
+        supabase.from('profiles').select('id, username, best_zero_to_hundred_s').eq('id', user.id).single(),
         supabase.from('vehicles').select('id, make, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
         AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY),
+        supabase.rpc('get_my_stats', { p_user_id: user.id }),
       ]);
 
       setDriveDetectEnabled(detectVal === 'true');
@@ -50,6 +52,7 @@ export default function ProfileScreen() {
         'anonymous'
       );
       if (profileRes.data) setProfile(profileRes.data);
+      if (statsRes.data?.[0]) setBestSpeedKmh(statsRes.data[0].max_speed_kmh ?? null);
       if (vehicleRes.data) {
         setVehicle(vehicleRes.data);
         setVehicleMake(vehicleRes.data.make ?? '');
@@ -264,6 +267,28 @@ export default function ProfileScreen() {
         </Text>
       </View>
 
+      {/* 내 기록 */}
+      <View style={s.card}>
+        <Text style={s.cardTitle}>내 기록</Text>
+        <View style={s.recordRow}>
+          <View style={s.recordItem}>
+            <Text style={s.recordValue}>
+              {bestSpeedKmh ? Math.round(bestSpeedKmh) : '-'}
+              <Text style={s.recordUnit}> km/h</Text>
+            </Text>
+            <Text style={s.recordLabel}>최고속도</Text>
+          </View>
+          <View style={s.recordDivider} />
+          <View style={s.recordItem}>
+            <Text style={s.recordValue}>
+              {profile?.best_zero_to_hundred_s ? profile.best_zero_to_hundred_s.toFixed(1) : '-'}
+              <Text style={s.recordUnit}> 초</Text>
+            </Text>
+            <Text style={s.recordLabel}>제로백</Text>
+          </View>
+        </View>
+      </View>
+
       {/* 내 차량 */}
       <View style={s.card}>
         <View style={s.cardHeader}>
@@ -410,6 +435,13 @@ const s = StyleSheet.create({
   avatarText: { fontSize: 28, fontWeight: '700', color: '#fff' },
   username: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   userSub: { ...typography.label, textAlign: 'center' },
+
+  recordRow: { flexDirection: 'row', alignItems: 'center' },
+  recordItem: { flex: 1, alignItems: 'center', gap: 4 },
+  recordDivider: { width: 1, height: 36, backgroundColor: colors.divider },
+  recordValue: { fontSize: 20, fontWeight: '700', color: colors.text },
+  recordUnit: { fontSize: 13, fontWeight: '400', color: colors.textSecondary },
+  recordLabel: { ...typography.label },
 
   nicknameEditGroup: { gap: spacing.xs },
   nicknameInput: {

@@ -432,7 +432,18 @@ export default function MapScreen() {
     })();
   };
 
-  const openZeroHundred = async () => {
+  const openZeroHundred = () => {
+    Alert.alert(
+      '안전 안내',
+      '제로백 측정은 공공도로가 아닌 트랙, 사유지 등 안전하고 합법적인 장소에서만 이용해주세요. 공공도로에서의 급가속은 위험하며 도로교통법 위반일 수 있습니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '확인, 측정 시작', onPress: () => startZeroHundred() },
+      ]
+    );
+  };
+
+  const startZeroHundred = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
     zhStateRef.current = 'ready';

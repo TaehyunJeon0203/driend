@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   RefreshControl, ActivityIndicator, Modal, TextInput, Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
@@ -12,8 +12,6 @@ type Tab = 'global' | 'friends';
 type Category = { key: string; label: string; unit: string; isCount?: boolean; asc?: boolean };
 const CATEGORIES: Category[] = [
   { key: 'total_distance',   label: '누적 거리',  unit: 'km' },
-  { key: 'max_speed',        label: '최고속도',   unit: 'km/h' },
-  { key: 'zero_to_hundred',  label: '제로백',     unit: 's',  asc: true },
   { key: 'monthly_distance', label: '이번 달',    unit: 'km' },
   { key: 'longest_drive',    label: '최장 주행',  unit: 'km' },
   { key: 'total_drives',     label: '총 주행 수', unit: '회', isCount: true },
@@ -224,7 +222,11 @@ export default function RankingScreen() {
             </Text>
           ) : (
             rankings.map((entry) => (
-              <View key={entry.user_id} style={[s.row, entry.is_me && s.rowMe]}>
+              <TouchableOpacity
+                key={entry.user_id}
+                style={[s.row, entry.is_me && s.rowMe]}
+                onPress={() => router.push(`/user/${entry.user_id}`)}
+              >
                 <Text style={[s.rank, { color: rankColor(entry.rank) }]}>
                   {entry.rank <= 3 ? ['🥇', '🥈', '🥉'][entry.rank - 1] : entry.rank}
                 </Text>
@@ -233,7 +235,7 @@ export default function RankingScreen() {
                 <Text style={s.rowValue}>
                   {formatValue(entry.value, category)} <Text style={s.rowUnit}>{category.unit}</Text>
                 </Text>
-              </View>
+              </TouchableOpacity>
             ))
           )}
           <View style={{ height: 32 }} />
