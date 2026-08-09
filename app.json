@@ -2,7 +2,7 @@
   "expo": {
     "name": "Driend",
     "slug": "driend",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "scheme": "driend",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.driend.app",
-      "buildNumber": "4",
+      "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "주행 경로를 기록하기 위해 위치 정보가 필요합니다.",
