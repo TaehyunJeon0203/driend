@@ -87,6 +87,7 @@ const ZH_RATE_WINDOW_SEGMENTS = 4;
 const ROUTE_WIDTH_BASE_ZOOM = 14;
 const ROUTE_WIDTH_SCALE_PER_ZOOM = 0.28;
 const ROUTE_WIDTH_MIN_SCALE = 0.9;
+
 const ROUTE_WIDTH_MAX_SCALE = 2.6;
 
 // 고속 주행 시 GPS 포인트가 초당 여러 번 들어올 수 있어(5m/2s 샘플링), 매 포인트마다

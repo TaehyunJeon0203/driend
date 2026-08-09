@@ -24,17 +24,17 @@ type RankEntry = {
   rank: number;
   user_id: string;
   username: string;
+  tag: string;
   avatar_url: string | null;
   value: number;
   is_me?: boolean;
 };
 
-type SearchUser = { user_id: string; username: string; avatar_url: string | null };
-type PendingRequest = { id: string; user_id: string; username: string; avatar_url: string | null };
+type SearchUser = { user_id: string; username: string; tag: string; avatar_url: string | null };
+type PendingRequest = { id: string; user_id: string; username: string; tag: string; avatar_url: string | null };
 
 function formatValue(value: number, cat: Category) {
   if (cat.isCount) return String(Math.round(value));
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}천`;
   return value.toFixed(1);
 }
 
@@ -91,7 +91,7 @@ export default function RankingScreen() {
           supabase.rpc('get_friend_ranking', { p_user_id: user.id, p_category: category.key }),
           supabase.from('friendships').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`).eq('status', 'accepted'),
           supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending'),
-          supabase.from('friendships').select('id, user_id, profiles!user_id(username, avatar_url)').eq('friend_id', user.id).eq('status', 'pending'),
+          supabase.from('friendships').select('id, user_id, profiles!user_id(username, tag, avatar_url)').eq('friend_id', user.id).eq('status', 'pending'),
         ]);
 
         data = rankRes.data ?? [];
@@ -110,6 +110,7 @@ export default function RankingScreen() {
           id: r.id,
           user_id: r.user_id,
           username: r.profiles?.username ?? '?',
+          tag: r.profiles?.tag ?? '0000',
           avatar_url: r.profiles?.avatar_url ?? null,
         }));
         setPendingRequests(received);
@@ -232,7 +233,9 @@ export default function RankingScreen() {
                   {entry.rank <= 3 ? ['🥇', '🥈', '🥉'][entry.rank - 1] : entry.rank}
                 </Text>
                 <Avatar name={entry.username} />
-                <Text style={s.rowName} numberOfLines={1}>{entry.username}{entry.is_me ? ' (나)' : ''}</Text>
+                <Text style={s.rowName} numberOfLines={1}>
+                  {entry.username}<Text style={s.rowTag}>#{entry.tag}</Text>{entry.is_me ? ' (나)' : ''}
+                </Text>
                 <Text style={s.rowValue}>
                   {formatValue(entry.value, category)} <Text style={s.rowUnit}>{category.unit}</Text>
                 </Text>
@@ -276,7 +279,7 @@ export default function RankingScreen() {
               return (
                 <View key={u.user_id} style={s.searchRow2}>
                   <Avatar name={u.username} />
-                  <Text style={s.searchName}>{u.username}</Text>
+                  <Text style={s.searchName}>{u.username}<Text style={s.rowTag}>#{u.tag}</Text></Text>
                   <TouchableOpacity
                     style={[s.addBtn, (isFriend || isSent) && s.addBtnDone]}
                     onPress={() => addFriend(u.user_id)}
@@ -310,7 +313,7 @@ export default function RankingScreen() {
               pendingRequests.map((r) => (
                 <View key={r.id} style={s.requestRow}>
                   <Avatar name={r.username} />
-                  <Text style={s.searchName}>{r.username}</Text>
+                  <Text style={s.searchName}>{r.username}<Text style={s.rowTag}>#{r.tag}</Text></Text>
                   <TouchableOpacity style={s.acceptBtn} onPress={() => acceptRequest(r)}>
                     <Text style={s.acceptBtnText}>수락</Text>
                   </TouchableOpacity>
@@ -383,6 +386,7 @@ const s = StyleSheet.create({
   rowMe: { borderWidth: 1.5, borderColor: colors.primary },
   rank: { width: 28, fontSize: 15, fontWeight: '700', textAlign: 'center' },
   rowName: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.text },
+  rowTag: { fontWeight: '400', color: colors.textTertiary },
   rowValue: { fontSize: 16, fontWeight: '700', color: colors.text },
   rowUnit: { fontSize: 12, fontWeight: '400', color: colors.textSecondary },
 

@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
-type PublicProfile = { username: string; best_zero_to_hundred_s: number | null };
+type PublicProfile = { username: string; tag: string; avatar_url: string | null; best_zero_to_hundred_s: number | null };
 
 export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,7 +17,7 @@ export default function UserProfileScreen() {
     setLoading(true);
     (async () => {
       const [profileRes, statsRes] = await Promise.all([
-        supabase.from('profiles').select('username, best_zero_to_hundred_s').eq('id', id).single(),
+        supabase.from('profiles').select('username, tag, avatar_url, best_zero_to_hundred_s').eq('id', id).single(),
         supabase.rpc('get_my_stats', { p_user_id: id }),
       ]);
       if (profileRes.data) setProfile(profileRes.data);
@@ -41,9 +41,13 @@ export default function UserProfileScreen() {
       ) : (
         <View style={s.content}>
           <View style={s.avatarCircle}>
-            <Text style={s.avatarText}>{profile.username[0]?.toUpperCase()}</Text>
+            {profile.avatar_url ? (
+              <Image source={{ uri: profile.avatar_url }} style={s.avatarImage} />
+            ) : (
+              <Text style={s.avatarText}>{profile.username[0]?.toUpperCase()}</Text>
+            )}
           </View>
-          <Text style={s.username}>{profile.username}</Text>
+          <Text style={s.username}>{profile.username}<Text style={s.usernameTag}>#{profile.tag}</Text></Text>
 
           <View style={s.card}>
             <Text style={s.cardTitle}>기록</Text>
@@ -84,7 +88,9 @@ const s = StyleSheet.create({
     backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 28, fontWeight: '700', color: '#fff' },
+  avatarImage: { width: 72, height: 72, borderRadius: 36 },
   username: { fontSize: 20, fontWeight: '700', color: colors.text },
+  usernameTag: { fontWeight: '400', color: colors.textTertiary },
 
   card: {
     width: '100%', backgroundColor: colors.card, borderRadius: radius.md,

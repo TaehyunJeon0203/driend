@@ -7,6 +7,7 @@ import * as Notifications from 'expo-notifications';
 import { initializeKakaoSDK } from '@react-native-kakao/core';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../src/services/supabase';
+import { generateRandomTag } from '../src/services/profileTag';
 import {
   startTracking, stopTracking, isTracking,
   cleanupOrphanedDrives, resetIdleTimer, startMonitoring,
@@ -53,11 +54,17 @@ async function handleAuthSession(session: Session | null) {
     .single();
   const isNewUser = !profile;
   if (isNewUser) {
-    await supabase.from('profiles').insert({
-      id: session.user.id,
-      username: session.user.user_metadata?.nickname ?? `user_${session.user.id.slice(0, 6)}`,
-      avatar_url: session.user.user_metadata?.avatar_url ?? null,
-    });
+    const username = session.user.user_metadata?.nickname ?? `user_${session.user.id.slice(0, 6)}`;
+    // 닉네임#태그 조합이 unique라 태그가 우연히 겹치면 재시도 (닉네임이 실명 위주라 충돌 가능)
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { error } = await supabase.from('profiles').insert({
+        id: session.user.id,
+        username,
+        tag: generateRandomTag(),
+        avatar_url: session.user.user_metadata?.avatar_url ?? null,
+      });
+      if (!error || error.code !== '23505') break;
+    }
   }
   startMonitoring();
   const { data: activeTrip } = await supabase

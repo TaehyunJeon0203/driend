@@ -1,19 +1,21 @@
 import { useCallback, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator, Platform, Switch, Linking,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Image,
+  StyleSheet, Alert, ActivityIndicator, Platform, Switch,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../src/services/supabase';
 import {
   DRIVE_DETECT_NOTIFICATION_KEY, startMonitoring,
 } from '../../src/services/locationTracker';
+import { uploadAvatar } from '../../src/services/avatar';
 import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
-type Profile = { id: string; username: string; best_zero_to_hundred_s: number | null };
+type Profile = { id: string; username: string; tag: string; avatar_url: string | null; best_zero_to_hundred_s: number | null };
 type Vehicle = { id: string; make: string | null; name: string; bt_device_name: string | null };
 
 export default function ProfileScreen() {
@@ -28,10 +30,12 @@ export default function ProfileScreen() {
   const [accountType, setAccountType] = useState<'kakao' | 'apple' | 'anonymous'>('anonymous');
   const [editingNickname, setEditingNickname] = useState(false);
   const [nicknameInput, setNicknameInput] = useState('');
+  const [tagInput, setTagInput] = useState('');
   const [savingNickname, setSavingNickname] = useState(false);
   const [driveDetectEnabled, setDriveDetectEnabled] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [bestSpeedKmh, setBestSpeedKmh] = useState<number | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -40,7 +44,7 @@ export default function ProfileScreen() {
       const user = session.user;
 
       const [profileRes, vehicleRes, detectVal, statsRes] = await Promise.all([
-        supabase.from('profiles').select('id, username, best_zero_to_hundred_s').eq('id', user.id).single(),
+        supabase.from('profiles').select('id, username, tag, avatar_url, best_zero_to_hundred_s').eq('id', user.id).single(),
         supabase.from('vehicles').select('id, make, name, bt_device_name').eq('user_id', user.id).maybeSingle(),
         AsyncStorage.getItem(DRIVE_DETECT_NOTIFICATION_KEY),
         supabase.rpc('get_my_stats', { p_user_id: user.id }),
@@ -107,13 +111,72 @@ export default function ProfileScreen() {
     setSaving(false);
   };
 
+  const pickAvatar = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('사진 접근 권한', '설정에서 사진 접근 권한을 허용해주세요.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+
+    setUploadingAvatar(true);
+    try {
+      const url = await uploadAvatar(session.user.id, result.assets[0].uri);
+      await supabase.from('profiles').update({ avatar_url: url }).eq('id', session.user.id);
+      setProfile((p) => p ? { ...p, avatar_url: url } : p);
+    } catch (e: any) {
+      Alert.alert('업로드 실패', e.message ?? String(e));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+
+    setUploadingAvatar(true);
+    try {
+      await supabase.storage.from('avatars').remove([`${session.user.id}/avatar.jpg`]);
+      await supabase.from('profiles').update({ avatar_url: null }).eq('id', session.user.id);
+      setProfile((p) => p ? { ...p, avatar_url: null } : p);
+    } catch (e: any) {
+      Alert.alert('삭제 실패', e.message ?? String(e));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleAvatarPress = () => {
+    if (!profile?.avatar_url) {
+      pickAvatar();
+      return;
+    }
+    Alert.alert('프로필 사진', undefined, [
+      { text: '취소', style: 'cancel' },
+      { text: '사진 변경', onPress: pickAvatar },
+      { text: '사진 삭제', style: 'destructive', onPress: removeAvatar },
+    ]);
+  };
+
   const startEditingNickname = () => {
     setNicknameInput(profile?.username ?? '');
+    setTagInput(profile?.tag ?? '');
     setEditingNickname(true);
   };
 
   const saveNickname = async () => {
-    if (!nicknameInput.trim()) return;
+    if (!nicknameInput.trim() || !tagInput.trim()) return;
     setSavingNickname(true);
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -121,16 +184,16 @@ export default function ProfileScreen() {
 
     const { error } = await supabase
       .from('profiles')
-      .update({ username: nicknameInput.trim() })
+      .update({ username: nicknameInput.trim(), tag: tagInput.trim() })
       .eq('id', session.user.id);
 
     if (error) {
       Alert.alert(
-        error.code === '23505' ? '닉네임 중복' : '오류',
-        error.code === '23505' ? '이미 사용 중인 닉네임이에요.' : error.message
+        error.code === '23505' ? '닉네임+태그 중복' : '오류',
+        error.code === '23505' ? '이미 같은 닉네임과 태그를 쓰는 유저가 있어요. 태그를 바꿔주세요.' : error.message
       );
     } else {
-      setProfile((p) => p ? { ...p, username: nicknameInput.trim() } : p);
+      setProfile((p) => p ? { ...p, username: nicknameInput.trim(), tag: tagInput.trim() } : p);
       setEditingNickname(false);
     }
     setSavingNickname(false);
@@ -232,22 +295,42 @@ export default function ProfileScreen() {
 
       {/* 사용자 정보 */}
       <View style={s.card}>
-        <View style={s.avatarCircle}>
-          <Text style={s.avatarText}>{(profile?.username ?? '?')[0].toUpperCase()}</Text>
-        </View>
+        <TouchableOpacity style={s.avatarCircle} onPress={handleAvatarPress} disabled={uploadingAvatar}>
+          {profile?.avatar_url ? (
+            <Image source={{ uri: profile.avatar_url }} style={s.avatarImage} />
+          ) : (
+            <Text style={s.avatarText}>{(profile?.username ?? '?')[0].toUpperCase()}</Text>
+          )}
+          <View style={s.avatarEditBadge}>
+            {uploadingAvatar
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Text style={s.avatarEditBadgeText}>✎</Text>}
+          </View>
+        </TouchableOpacity>
         {editingNickname ? (
           <View style={s.nicknameEditGroup}>
-            <TextInput
-              style={s.nicknameInput}
-              value={nicknameInput}
-              onChangeText={setNicknameInput}
-              placeholder="닉네임"
-              placeholderTextColor={colors.textTertiary}
-              maxLength={20}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={saveNickname}
-            />
+            <View style={s.nicknameTagRow}>
+              <TextInput
+                style={[s.nicknameInput, s.nicknameInputFlex]}
+                value={nicknameInput}
+                onChangeText={setNicknameInput}
+                placeholder="닉네임"
+                placeholderTextColor={colors.textTertiary}
+                maxLength={20}
+                autoFocus
+                returnKeyType="next"
+              />
+              <TextInput
+                style={[s.nicknameInput, s.tagInput]}
+                value={tagInput}
+                onChangeText={setTagInput}
+                placeholder="태그"
+                placeholderTextColor={colors.textTertiary}
+                maxLength={10}
+                returnKeyType="done"
+                onSubmitEditing={saveNickname}
+              />
+            </View>
             <View style={s.nicknameEditActions}>
               <TouchableOpacity onPress={() => setEditingNickname(false)}>
                 <Text style={s.nicknameCancel}>취소</Text>
@@ -261,7 +344,11 @@ export default function ProfileScreen() {
           </View>
         ) : (
           <TouchableOpacity onPress={startEditingNickname}>
-            <Text style={s.username}>{profile?.username ?? '게스트'} <Text style={s.editBtn}>수정</Text></Text>
+            <Text style={s.username}>
+              {profile?.username ?? '게스트'}
+              {profile ? <Text style={s.usernameTag}>#{profile.tag}</Text> : null}
+              {' '}<Text style={s.editBtn}>수정</Text>
+            </Text>
           </TouchableOpacity>
         )}
         <Text style={s.userSub}>
@@ -385,14 +472,14 @@ export default function ProfileScreen() {
       <View style={s.card}>
         <TouchableOpacity
           style={s.legalRow}
-          onPress={() => Linking.openURL('https://vrcaacjnbslqrioihwnt.supabase.co/functions/v1/privacy-policy')}
+          onPress={() => router.push('/legal/privacy')}
         >
           <Text style={s.legalText}>개인정보처리방침</Text>
         </TouchableOpacity>
         <View style={s.legalDivider} />
         <TouchableOpacity
           style={s.legalRow}
-          onPress={() => Linking.openURL('https://vrcaacjnbslqrioihwnt.supabase.co/functions/v1/terms-of-service')}
+          onPress={() => router.push('/legal/terms')}
         >
           <Text style={s.legalText}>이용약관</Text>
         </TouchableOpacity>
@@ -439,8 +526,17 @@ const s = StyleSheet.create({
     width: 72, height: 72, borderRadius: 36,
     backgroundColor: colors.primary, alignSelf: 'center',
     alignItems: 'center', justifyContent: 'center',
+    overflow: 'visible',
   },
+  avatarImage: { width: 72, height: 72, borderRadius: 36 },
   avatarText: { fontSize: 28, fontWeight: '700', color: '#fff' },
+  avatarEditBadge: {
+    position: 'absolute', bottom: -2, right: -2,
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: colors.text, borderWidth: 2, borderColor: colors.card,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarEditBadgeText: { color: '#fff', fontSize: 12 },
   username: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   userSub: { ...typography.label, textAlign: 'center' },
 
@@ -452,11 +548,15 @@ const s = StyleSheet.create({
   recordLabel: { ...typography.label },
 
   nicknameEditGroup: { gap: spacing.xs },
+  nicknameTagRow: { flexDirection: 'row', gap: spacing.xs },
   nicknameInput: {
     height: 44, borderRadius: radius.sm,
     backgroundColor: colors.background, paddingHorizontal: spacing.sm,
     fontSize: 16, color: colors.text, textAlign: 'center',
   },
+  nicknameInputFlex: { flex: 1 },
+  tagInput: { width: 90 },
+  usernameTag: { color: colors.textTertiary, fontWeight: '400' },
   nicknameEditActions: { flexDirection: 'row', justifyContent: 'center', gap: spacing.md },
   nicknameCancel: { fontSize: 14, color: colors.textSecondary },
   nicknameSave: { fontSize: 14, fontWeight: '600', color: colors.primary },
