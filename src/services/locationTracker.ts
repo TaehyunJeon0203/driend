@@ -55,10 +55,10 @@ export function setActiveTripId(id: string | null): void {
   activeTripId = id;
 }
 
-const pointListeners = new Set<(coord: Coordinate) => void>();
+const pointListeners = new Set<(coord: Coordinate, distanceKm: number) => void>();
 const stopListeners = new Set<() => void>();
 
-export function addPointListener(cb: (coord: Coordinate) => void): () => void {
+export function addPointListener(cb: (coord: Coordinate, distanceKm: number) => void): () => void {
   pointListeners.add(cb);
   return () => pointListeners.delete(cb);
 }
@@ -123,7 +123,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
 
     buffer.push(coord);
     driveCoords.push(coord);
-    pointListeners.forEach((cb) => cb(coord));
+    pointListeners.forEach((cb) => cb(coord, runningDistanceKm));
 
     const speed = loc.coords.speed ?? -1;
     if (speed > maxSpeedMs) maxSpeedMs = speed;
@@ -296,8 +296,8 @@ export async function startTracking(): Promise<boolean> {
 
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
-    distanceInterval: 10,
-    timeInterval: 3000,
+    distanceInterval: 5,
+    timeInterval: 2000,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
       notificationTitle: 'Driend 주행 중',

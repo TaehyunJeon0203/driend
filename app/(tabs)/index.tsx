@@ -3,21 +3,24 @@ import {
   View, StyleSheet, TouchableOpacity, Text, Alert,
   ActivityIndicator, Modal,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
 import { Accelerometer } from 'expo-sensors';
 import {
   LongPressGestureHandler, State,
   type LongPressGestureHandlerEventPayload,
   type HandlerStateChangeEvent,
 } from 'react-native-gesture-handler';
+import Svg, { Path } from 'react-native-svg';
 import {
   NaverMapView,
   NaverMapPathOverlay,
   NaverMapPolygonOverlay,
+  NaverMapPolylineOverlay,
   NaverMapGroundOverlay,
   type NaverMapViewRef,
+  type CameraChangeReason,
 } from '@mj-studio/react-native-naver-map';
 import { supabase } from '../../src/services/supabase';
 import {
@@ -25,8 +28,8 @@ import {
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
 import { buildCityIndex, bboxIntersects, matchCity, matchVisitedCities, padBBox, type BBox } from '../../src/services/geo';
-import { clipAndUploadCityPhoto } from '../../src/services/cityPhotoClipper';
-import CityPhotoCropper from '../../src/components/CityPhotoCropper';
+import { addCityPhotos } from '../../src/services/cityPhotos';
+import CityPhotoGallery from '../../src/components/CityPhotoGallery';
 import { colors } from '../../src/theme';
 import CITY_DATA from '../../assets/korea-cities.json';
 import CITY_DATA_SIMPLIFIED from '../../assets/korea-cities-simplified.json';
@@ -36,7 +39,6 @@ type RouteLine = { drive_id: string; coordinates: [number, number][] };
 type LatLng = { latitude: number; longitude: number };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 type City = { code: string; name: string; province_code: string; center: LatLng; polygons: LatLng[][] };
-type CropTarget = { cityId: string; cityCode: string; imageUri: string; polygons: LatLng[][] };
 
 const CITIES = CITY_DATA as City[];
 const CITIES_SIMPLIFIED = CITY_DATA_SIMPLIFIED as City[];
@@ -60,6 +62,7 @@ const PROVINCE_COLOR_MAP = new Map(
   PROVINCE_CODES.map((code, i) => [code, PROVINCE_COLORS[i % PROVINCE_COLORS.length]])
 );
 const PHOTO_MAP_BG = '#122238';
+const ONBOARDING_SEEN_KEY = 'map_onboarding_seen';
 const CITY_BBOX_MAP = new Map(CITY_INDEX.map(({ city, bbox }) => [city.code, bbox]));
 
 // 사진 모드 축소/확대에 따른 배경 렌더링 정밀도 전환 임계값 (경계값 근처 떨림 방지용 히스테리시스).
@@ -83,33 +86,63 @@ const ZH_RATE_WINDOW_SEGMENTS = 4;
 // 기준 줌(현재 굵기 값들이 설계된 지점) 대비 줌 1당 굵기를 비례 확대/축소함
 const ROUTE_WIDTH_BASE_ZOOM = 14;
 const ROUTE_WIDTH_SCALE_PER_ZOOM = 0.28;
-const ROUTE_WIDTH_MIN_SCALE = 0.6;
+const ROUTE_WIDTH_MIN_SCALE = 0.9;
 const ROUTE_WIDTH_MAX_SCALE = 2.6;
+
+// 고속 주행 시 GPS 포인트가 초당 여러 번 들어올 수 있어(5m/2s 샘플링), 매 포인트마다
+// 전체 배열을 복사해 네이티브 폴리라인을 다시 그리면 긴 주행일수록 무거워짐.
+// 화면 반영은 이 간격으로 묶어서 보냄 (거리/타이머 등 다른 상태는 즉시 반영)
+const ROUTE_COORDS_FLUSH_MS = 700;
 
 function routeWidthScale(zoom: number): number {
   const scale = 1 + (zoom - ROUTE_WIDTH_BASE_ZOOM) * ROUTE_WIDTH_SCALE_PER_ZOOM;
   return Math.min(ROUTE_WIDTH_MAX_SCALE, Math.max(ROUTE_WIDTH_MIN_SCALE, scale));
 }
 
+function formatElapsed(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// 지도 밖 빈 여백으로 스크롤되는 것을 막기 위한 카메라 이동 제한 범위.
+// 본토+제주+독도까지 포함 (라이브러리 기본 isExtentBoundedInKorea는 중국·러시아 국경
+// 근처까지 포함할 만큼 넉넉해서 그 여백으로 스크롤하면 빈 영역이 보였음)
+const KOREA_EXTENT = {
+  latitude: 32.8,
+  longitude: 124.5,
+  latitudeDelta: 38.9 - 32.8,
+  longitudeDelta: 131.95 - 124.5,
+};
+
 export default function MapScreen() {
   const mapRef = useRef<NaverMapViewRef>(null);
   const isFirstPoint = useRef(true);
   const hasCenteredOnUser = useRef(false);
   const cityBackfillDone = useRef(false);
+  const routeCoordsBufferRef = useRef<LatLng[]>([]);
+  const lastRouteFlushRef = useRef(0);
   const [tracking, setTracking] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [pastLines, setPastLines] = useState<RouteLine[]>([]);
   const [currentPosition, setCurrentPosition] = useState<LatLng | null>(null);
+  const [totalDistanceKm, setTotalDistanceKm] = useState(0);
 
   const [mapMode, setMapMode] = useState<MapMode>('drive');
   const [visitedCities, setVisitedCities] = useState<VisitedCity[]>([]);
-  const [photoUploading, setPhotoUploading] = useState<string | null>(null);
-  const [cropTarget, setCropTarget] = useState<CropTarget | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [galleryTarget, setGalleryTarget] = useState<{ visitedId: string; cityCode: string; cityName: string; autoAdd?: boolean; startInEdit?: boolean } | null>(null);
+  const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2>(0);
   const [photoLowDetail, setPhotoLowDetail] = useState(true);
   const photoLowDetailRef = useRef(true);
   const [photoVisibleRegion, setPhotoVisibleRegion] = useState<BBox | null>(null);
   const [driveZoom, setDriveZoom] = useState(ROUTE_WIDTH_BASE_ZOOM);
+  const [followingMe, setFollowingMe] = useState(false);
+  const [driveDistanceKm, setDriveDistanceKm] = useState(0);
+  const [driveElapsedSec, setDriveElapsedSec] = useState(0);
+  const driveStartRef = useRef<number | null>(null);
+  const driveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 제로백 측정
   type ZHState = 'ready' | 'measuring' | 'done';
@@ -131,9 +164,17 @@ export default function MapScreen() {
     if (data) setPastLines(data);
   }, []);
 
+  const loadTotalDistance = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const { data } = await supabase.rpc('get_my_stats', { p_user_id: session.user.id }).single();
+    if (data) setTotalDistanceKm((data as { total_distance_km: number }).total_distance_km ?? 0);
+  }, []);
+
   const loadVisitedCities = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return;
+    setUserId(session.user.id);
     const { data } = await supabase
       .from('visited_cities')
       .select('id, city_code, city_name, photo_url')
@@ -144,7 +185,25 @@ export default function MapScreen() {
   useFocusEffect(useCallback(() => {
     loadPastRoutes();
     loadVisitedCities();
-  }, [loadPastRoutes, loadVisitedCities]));
+    loadTotalDistance();
+  }, [loadPastRoutes, loadVisitedCities, loadTotalDistance]));
+
+  useEffect(() => {
+    AsyncStorage.getItem(ONBOARDING_SEEN_KEY).then((seen) => {
+      if (seen !== 'true') setOnboardingStep(1);
+    });
+  }, []);
+
+  const advanceOnboarding = () => {
+    setMapMode('photo');
+    setOnboardingStep(2);
+  };
+
+  const finishOnboarding = () => {
+    setMapMode('drive');
+    setOnboardingStep(0);
+    AsyncStorage.setItem(ONBOARDING_SEEN_KEY, 'true');
+  };
 
   useEffect(() => {
     if (isTracking()) {
@@ -152,12 +211,27 @@ export default function MapScreen() {
       isFirstPoint.current = false;
     }
 
-    const removePoint = addPointListener((coord) => {
+    const removePoint = addPointListener((coord, distanceKm) => {
       const latLng = { latitude: coord.latitude, longitude: coord.longitude };
-      setRouteCoords((prev) => [...prev, latLng]);
+      routeCoordsBufferRef.current.push(latLng);
       setCurrentPosition(latLng);
+      setDriveDistanceKm(distanceKm);
+
+      // 화면(및 네이티브 폴리라인) 반영은 묶어서 — 첫 포인트만 예외로 즉시 반영해 지연 없이 선이 시작되게 함
+      const now = Date.now();
+      if (isFirstPoint.current || now - lastRouteFlushRef.current >= ROUTE_COORDS_FLUSH_MS) {
+        lastRouteFlushRef.current = now;
+        setRouteCoords([...routeCoordsBufferRef.current]);
+      }
+
       if (isFirstPoint.current) {
         isFirstPoint.current = false;
+        driveStartRef.current = Date.now();
+        setDriveElapsedSec(0);
+        if (driveTimerRef.current) clearInterval(driveTimerRef.current);
+        driveTimerRef.current = setInterval(() => {
+          if (driveStartRef.current) setDriveElapsedSec(Math.floor((Date.now() - driveStartRef.current) / 1000));
+        }, 1000);
         mapRef.current?.animateCameraTo({ latitude: coord.latitude, longitude: coord.longitude, zoom: 15, duration: 600 });
       } else if (isTracking()) {
         // 주행 중에는 지도가 내 위치를 계속 따라가도록 (줌 레벨은 유지)
@@ -168,8 +242,15 @@ export default function MapScreen() {
     const removeStop = addStopListener(() => {
       setTracking(false);
       setRouteCoords([]);
+      routeCoordsBufferRef.current = [];
+      lastRouteFlushRef.current = 0;
+      setDriveDistanceKm(0);
+      setDriveElapsedSec(0);
+      driveStartRef.current = null;
+      if (driveTimerRef.current) { clearInterval(driveTimerRef.current); driveTimerRef.current = null; }
       loadPastRoutes();
       loadVisitedCities();
+      loadTotalDistance();
     });
 
     let locationSub: Location.LocationSubscription | null = null;
@@ -189,7 +270,7 @@ export default function MapScreen() {
     });
 
     return () => { removePoint(); removeStop(); locationSub?.remove(); };
-  }, [loadPastRoutes, loadVisitedCities]);
+  }, [loadPastRoutes, loadVisitedCities, loadTotalDistance]);
 
   const heatSegments = useMemo(() => {
     if (!pastLines.length) return [];
@@ -208,13 +289,15 @@ export default function MapScreen() {
     const getFreq = (lng: number, lat: number) =>
       freqMap.get(`${Math.round(lat * 1000)},${Math.round(lng * 1000)}`) ?? 1;
 
-    // 단일 그린 계열 그라데이션(연한 세이지 → 짙은 포레스트)으로 통일 — 채도 다른 색 섞이는 것보다 차분한 인상
+    // 네이버 지도 Basic 테마 배경이 산/녹지 위주로 초록 계열이라, 기존 그린 그라데이션은
+    // 특히 옅은 구간(1회)이 지형과 색이 겹쳐 거의 안 보였음. 지도에 쓰이지 않는 보라 계열
+    // 그라데이션(연한 라벤더 → 짙은 바이올렛)으로 교체해 배경과 확실히 대비되게 함
     // 흰 테두리(outline)를 둘러 지도 배경과 대비를 주고 입체감 있게 표현
     const freqStyle = (freq: number): { color: string; width: number } => {
-      if (freq >= 7) return { color: '#0B4A34', width: 7 };  // 짙은 포레스트 (7회+)
-      if (freq >= 4) return { color: '#1F6E4F', width: 6 };  // 진한 에메랄드 (4-6회)
-      if (freq >= 2) return { color: '#5B9279', width: 5 };  // 세이지 그린 (2-3회)
-      return { color: '#A8C3B4', width: 4 };                 // 연한 세이지 (1회)
+      if (freq >= 7) return { color: '#4C1D95', width: 7 };  // 짙은 바이올렛 (7회+)
+      if (freq >= 4) return { color: '#6D28D9', width: 6 };  // 퍼플 (4-6회)
+      if (freq >= 2) return { color: '#8B5CF6', width: 5 };  // 라이트 퍼플 (2-3회)
+      return { color: '#C4B5FD', width: 4 };                 // 연한 라벤더 (1회)
     };
 
     const segments: Array<{ coords: LatLng[]; color: string; width: number }> = [];
@@ -292,6 +375,24 @@ export default function MapScreen() {
     if (params.zoom != null) setDriveZoom(params.zoom);
   }, []);
 
+  // 사용자가 직접 지도를 움직이면(제스처) 더 이상 내 위치를 따라가는 상태가 아님
+  const handleDriveCameraChanged = useCallback((params: { reason: CameraChangeReason }) => {
+    if (params.reason === 'Gesture') setFollowingMe(false);
+  }, []);
+
+  const handleLocateMe = useCallback(async () => {
+    let pos = currentPosition;
+    if (!pos) {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      pos = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      setCurrentPosition(pos);
+    }
+    mapRef.current?.animateCameraTo({ ...pos, zoom: Math.max(driveZoom, 14), duration: 500 });
+    setFollowingMe(true);
+  }, [currentPosition, driveZoom]);
+
   const photoVisibleCities = useMemo(() => {
     const source = photoLowDetail ? citiesWithMetaSimplified : citiesWithMeta;
     const unvisited = source.filter((c) => !c.visited);
@@ -326,96 +427,8 @@ export default function MapScreen() {
     })();
   }, [mapMode, pastLines, loadVisitedCities]);
 
-  const pickCityPhoto = async (cityId: string, cityCode: string, polygons: LatLng[][]) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('권한 필요', '사진 라이브러리 접근 권한이 필요해요.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.9,
-    });
-
-    if (result.canceled) return;
-    setCropTarget({ cityId, cityCode, imageUri: result.assets[0].uri, polygons });
-  };
-
-  const uploadCroppedCityPhoto = async (cityId: string, cityCode: string, croppedUri: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user) return;
-    const user = session.user;
-
-    setPhotoUploading(cityCode);
-    try {
-      const path = `${user.id}/${cityId}.png`;
-
-      const formData = new FormData();
-      formData.append('file', { uri: croppedUri, name: 'photo.png', type: 'image/png' } as any);
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/city-photos/${path}`);
-        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
-        xhr.setRequestHeader('x-upsert', 'true');
-        xhr.onload = () => {
-          if (xhr.status < 300) resolve();
-          else { try { reject(new Error(JSON.parse(xhr.responseText).message)); } catch { reject(new Error('업로드 실패')); } }
-        };
-        xhr.onerror = () => reject(new Error('네트워크 오류'));
-        xhr.send(formData);
-      });
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('city-photos')
-        .getPublicUrl(path);
-
-      const { url: rawUrl, error: clipError } = await clipAndUploadCityPhoto({
-        cityCode, storagePath: path, publicUrl,
-      });
-      if (clipError) console.warn('clip-city-photo failed:', clipError);
-
-      // 클리핑 결과는 항상 같은 스토리지 경로에 덮어써져 URL이 재업로드해도 동일함 —
-      // 캐시버스터가 없으면 지도 오버레이/CDN이 예전 이미지를 계속 보여줌
-      const clippedUrl = `${rawUrl}?v=${Date.now()}`;
-
-      const { error: updateError } = await supabase
-        .from('visited_cities')
-        .update({ photo_url: clippedUrl })
-        .eq('id', cityId);
-      if (updateError) throw updateError;
-
-      setVisitedCities((prev) => prev.map((c) => c.id === cityId ? { ...c, photo_url: clippedUrl } : c));
-    } catch (e: any) {
-      Alert.alert('업로드 실패', e.message ?? String(e));
-    } finally {
-      setPhotoUploading(null);
-    }
-  };
-
-  const deleteCityPhoto = async (cityId: string) => {
-    await supabase.from('visited_cities').update({ photo_url: null }).eq('id', cityId);
-    setVisitedCities((prev) => prev.map((c) => c.id === cityId ? { ...c, photo_url: null } : c));
-  };
-
-  const showCityPhotoOptions = (city: typeof citiesWithMeta[number]) => {
-    if (!city.visited || !city.visitedId) {
-      Alert.alert(city.name, '아직 방문하지 않은 지역이에요. 주행 기록이 있어야 사진을 등록할 수 있어요.');
-      return;
-    }
-    const visitedId = city.visitedId;
-
-    const buttons: any[] = [];
-    if (city.photoUrl) {
-      buttons.push({ text: '사진 변경', onPress: () => pickCityPhoto(visitedId, city.code, city.polygons) });
-      buttons.push({ text: '사진 삭제', style: 'destructive', onPress: () => deleteCityPhoto(visitedId) });
-    } else {
-      buttons.push({ text: '사진 등록', onPress: () => pickCityPhoto(visitedId, city.code, city.polygons) });
-    }
-    buttons.push({ text: '취소', style: 'cancel' });
-    Alert.alert(city.name, undefined, buttons);
-  };
-
+  // 롱프레스 = 사진 등록(여러 장 선택 가능, 첫 장이 자동 대표사진). 관리(삭제/대표사진 변경)는 탭 -> 갤러리에서.
+  // 롱프레스 = 사진 등록 (갤러리를 열고 바로 사진 추가 흐름 시작). 관리(삭제/대표사진 변경)는 탭 -> 갤러리에서.
   const handleMapLongPress = (event: HandlerStateChangeEvent<LongPressGestureHandlerEventPayload>) => {
     if (mapMode !== 'photo' || event.nativeEvent.state !== State.ACTIVE) return;
     const { x, y } = event.nativeEvent;
@@ -428,7 +441,32 @@ export default function MapScreen() {
       if (!city) return;
 
       const meta = citiesWithMeta.find((c) => c.code === city.code);
-      if (meta) showCityPhotoOptions(meta);
+      if (!meta) return;
+      if (!meta.visited || !meta.visitedId) {
+        Alert.alert(meta.name, '아직 방문하지 않은 지역이에요. 주행 기록이 있어야 사진을 등록할 수 있어요.');
+        return;
+      }
+      const visitedId = meta.visitedId;
+
+      if (!meta.photoUrl) {
+        // 등록된 사진이 없는 도시 — 등록 여부부터 확인
+        Alert.alert(meta.name, '이 지역에 사진을 등록할까요?', [
+          { text: '취소', style: 'cancel' },
+          {
+            text: '등록',
+            onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, autoAdd: true }),
+          },
+        ]);
+      } else {
+        // 이미 사진이 있는 도시 — 수정(추가/삭제/순서/대표사진) 여부 확인
+        Alert.alert(meta.name, undefined, [
+          { text: '취소', style: 'cancel' },
+          {
+            text: '수정',
+            onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, startInEdit: true }),
+          },
+        ]);
+      }
     })();
   };
 
@@ -610,22 +648,22 @@ export default function MapScreen() {
         ref={mapRef}
         style={[s.map, mapMode === 'photo' && s.mapPhotoMode]}
         initialCamera={{ latitude: 36.5, longitude: 127.5, zoom: 6 }}
-        mapType={mapMode === 'photo' ? 'None' : 'Basic'}
-        isShowLocationButton={mapMode === 'drive'}
+        mapType={mapMode === 'photo' ? 'None' : 'Navi'}
+        isShowLocationButton={false}
         isShowCompass={mapMode === 'drive'}
-        isExtentBoundedInKorea
+        isShowZoomControls={false}
+        extent={KOREA_EXTENT}
+        minZoom={6.5}
+        isRotateGesturesEnabled={false}
         locationOverlay={mapMode === 'drive' && currentPosition ? {
           isVisible: true,
           position: currentPosition,
-          circleRadius: 60,
-          circleColor: 'rgba(0, 120, 255, 0.08)',
-          circleOutlineWidth: 1,
-          circleOutlineColor: 'rgba(0, 120, 255, 0.25)',
         } : { isVisible: false }}
         onCameraIdle={
           mapMode === 'photo' ? handlePhotoCameraIdle :
           mapMode === 'drive' ? handleDriveCameraIdle : undefined
         }
+        onCameraChanged={mapMode === 'drive' ? handleDriveCameraChanged : undefined}
       >
         {mapMode === 'drive' && (
           <>
@@ -640,9 +678,10 @@ export default function MapScreen() {
               />
             ))}
             {routeCoords.length >= 2 && (
+              // 현재 주행 중인 경로는 과거 기록(보라 계열)과 구분되도록 선명한 핑크로 강조
               <NaverMapPathOverlay
                 coords={routeCoords}
-                color="#00D084"
+                color="#FF2D78"
                 outlineColor="rgba(255,255,255,0.9)"
                 outlineWidth={2.5 * routeWidthScale(driveZoom)}
                 width={7 * routeWidthScale(driveZoom)}
@@ -665,25 +704,42 @@ export default function MapScreen() {
               ))
             )}
 
-            {citiesWithMeta.filter((c) => c.visited).flatMap((c) => [
-              ...c.polygons.map((coords, i) => (
-                <NaverMapPolygonOverlay
-                  key={`visited-poly-${c.code}-${i}`}
-                  coords={coords}
-                  color={`${c.color}F2`}
-                  outlineWidth={1.75}
-                  outlineColor="rgba(255,255,255,0.95)"
-                />
-              )),
-              ...(c.photoUrl ? [
-                <NaverMapGroundOverlay
-                  key={`photo-${c.code}`}
-                  globalZIndex={1}
-                  image={{ httpUri: c.photoUrl }}
-                  region={CITY_REGION_MAP.get(c.code)!}
-                />
-              ] : []),
-            ])}
+            {citiesWithMeta.filter((c) => c.visited).flatMap((c) => {
+              // 사진이 없으면 탭은 아무 동작도 하지 않음 (등록은 롱프레스로만)
+              const onTapCity = () =>
+                c.visitedId && setGalleryTarget({ visitedId: c.visitedId, cityCode: c.code, cityName: c.name });
+              return [
+                ...c.polygons.map((coords, i) => (
+                  <NaverMapPolygonOverlay
+                    key={`visited-poly-${c.code}-${i}`}
+                    coords={coords}
+                    color={`${c.color}F2`}
+                    outlineWidth={1.75}
+                    outlineColor="rgba(255,255,255,0.95)"
+                  />
+                )),
+                ...(c.photoUrl ? [
+                  <NaverMapGroundOverlay
+                    key={`photo-${c.code}`}
+                    globalZIndex={1}
+                    image={{ httpUri: c.photoUrl }}
+                    region={CITY_REGION_MAP.get(c.code)!}
+                    onTap={onTapCity}
+                  />,
+                  // 지상 오버레이(사진)가 폴리곤 테두리를 덮어버려서, 테두리만 순수 선으로 다시 그림
+                  // (채우기 있는 폴리곤을 투명색으로 위에 얹으면 탭을 가로채는 문제가 있어 폴리라인 사용)
+                  ...c.polygons.map((coords, i) => (
+                    <NaverMapPolylineOverlay
+                      key={`visited-poly-border-${c.code}-${i}`}
+                      globalZIndex={2}
+                      coords={coords}
+                      width={1}
+                      color="rgba(255,255,255,0.95)"
+                    />
+                  )),
+                ] : []),
+              ];
+            })}
           </>
         )}
       </NaverMapView>
@@ -715,7 +771,7 @@ export default function MapScreen() {
           >
             {toggling
               ? <ActivityIndicator size="small" color="#fff" />
-              : <Text style={s.trackText}>{tracking ? '⏹ 기록 중지' : '▶ 주행 시작'}</Text>
+              : <Text style={s.trackText}>{tracking ? '중지' : '시작'}</Text>
             }
           </TouchableOpacity>
 
@@ -723,31 +779,58 @@ export default function MapScreen() {
             <Text style={s.zhBtnText}>0→100</Text>
           </TouchableOpacity>
 
-          {tracking && (
-            <View style={s.recordingBadge}>
-              <Text style={s.recordingText}>● 기록 중</Text>
+          <View style={s.driveHud} pointerEvents="box-none">
+            <View style={s.driveHudStatusRow}>
+              <View style={[s.driveHudDot, tracking && s.driveHudDotActive]} />
+              <Text style={s.driveHudStatusText}>{tracking ? '기록 중' : '기록 대기'}</Text>
             </View>
-          )}
+            <View style={s.driveHudNumRow}>
+              <View style={s.driveHudDistanceGroup}>
+                <Text style={s.driveHudDistance}>{(totalDistanceKm + driveDistanceKm).toFixed(2)}</Text>
+                <View style={s.driveHudUnitCol}>
+                  <Text style={s.driveHudUnit}>km</Text>
+                  <Text style={s.driveHudSub}>누적</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={handleLocateMe} hitSlop={12}>
+                <Svg width={27} height={27} viewBox="0 0 24 24" style={{ transform: [{ rotate: '45deg' }] }}>
+                  <Path
+                    d="M12 2 4.5 20.29 5.21 21 12 18 18.79 21 19.5 20.29 12 2Z"
+                    fill={followingMe ? colors.text : 'none'}
+                    stroke={colors.text}
+                    strokeWidth={followingMe ? 0 : 1.4}
+                    strokeLinejoin="round"
+                  />
+                </Svg>
+              </TouchableOpacity>
+            </View>
+            {tracking && <Text style={s.driveHudTimer}>{formatElapsed(driveElapsedSec)}</Text>}
+          </View>
         </>
       )}
 
-      {mapMode === 'photo' && photoUploading && (
-        <View style={s.uploadingBadge}>
-          <ActivityIndicator size="small" color="#fff" />
-          <Text style={s.uploadingText}>사진 업로드 중...</Text>
+      {mapMode === 'photo' && (
+        <View style={s.driveHud} pointerEvents="none">
+          <View style={s.driveHudNumRow}>
+            <Text style={s.driveHudDistance}>{visitedCities.length}</Text>
+            <View style={s.driveHudUnitCol}>
+              <Text style={s.driveHudUnit}>곳</Text>
+              <Text style={s.driveHudSub}>방문</Text>
+            </View>
+          </View>
         </View>
       )}
 
-      <CityPhotoCropper
-        visible={!!cropTarget}
-        imageUri={cropTarget?.imageUri ?? null}
-        polygons={cropTarget?.polygons ?? []}
-        onCancel={() => setCropTarget(null)}
-        onConfirm={(uri) => {
-          const target = cropTarget;
-          setCropTarget(null);
-          if (target) uploadCroppedCityPhoto(target.cityId, target.cityCode, uri);
-        }}
+      <CityPhotoGallery
+        visible={!!galleryTarget}
+        userId={userId}
+        visitedId={galleryTarget?.visitedId ?? null}
+        cityCode={galleryTarget?.cityCode ?? null}
+        cityName={galleryTarget?.cityName ?? ''}
+        autoAdd={galleryTarget?.autoAdd ?? false}
+        startInEdit={galleryTarget?.startInEdit ?? false}
+        onClose={() => setGalleryTarget(null)}
+        onChanged={loadVisitedCities}
       />
 
       {/* 제로백 측정 모달 */}
@@ -782,6 +865,27 @@ export default function MapScreen() {
           </View>
         </View>
       </Modal>
+
+      {onboardingStep > 0 && (
+        <View style={s.onboardOverlay} pointerEvents="box-none">
+          {onboardingStep === 1 && (
+            <View style={[s.onboardBubble, s.onboardBubbleBottom]}>
+              <Text style={s.onboardText}>도로 모드에서는{'\n'}"시작"을 눌러 주행을 기록하세요</Text>
+              <TouchableOpacity style={s.onboardBtn} onPress={advanceOnboarding}>
+                <Text style={s.onboardBtnText}>다음</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {onboardingStep === 2 && (
+            <View style={[s.onboardBubble, s.onboardBubbleTop]}>
+              <Text style={s.onboardText}>사진 모드에서는{'\n'}방문한 지역을 길게 눌러 사진을 등록하세요</Text>
+              <TouchableOpacity style={s.onboardBtn} onPress={finishOnboarding}>
+                <Text style={s.onboardBtnText}>확인</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -818,60 +922,108 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: 48,
     alignSelf: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: 40,
-    paddingVertical: 14,
-    borderRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 5,
-    minWidth: 160,
+    width: 140,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#111111',
+    justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 5,
   },
-  trackBtnActive: { backgroundColor: colors.danger },
+  trackBtnActive: { backgroundColor: '#111111' },
   trackBtnDisabled: { opacity: 0.7 },
-  trackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  recordingBadge: {
+  trackText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  driveHud: {
     position: 'absolute',
-    top: 104,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(240,68,82,0.9)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
+    top: 116,
+    left: 20,
+    right: 20,
   },
-  recordingText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  uploadingBadge: {
-    position: 'absolute',
-    bottom: 48,
-    alignSelf: 'center',
+  driveHudStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(4,120,87,0.9)',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 24,
+    gap: 6,
+    marginBottom: 6,
   },
-  uploadingText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  driveHudDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.textTertiary,
+  },
+  driveHudDotActive: { backgroundColor: colors.danger },
+  driveHudStatusText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#4B5563',
+    textShadowColor: 'rgba(255,255,255,0.8)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
+  driveHudNumRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  driveHudDistanceGroup: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  driveHudDistance: {
+    fontSize: 48,
+    fontWeight: '500',
+    color: colors.text,
+    letterSpacing: -1.5,
+    lineHeight: 48,
+    textShadowColor: 'rgba(255,255,255,0.8)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+  },
+  driveHudUnitCol: {
+    marginLeft: 6,
+    marginBottom: 4,
+  },
+  driveHudUnit: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    lineHeight: 17,
+  },
+  driveHudSub: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: colors.textTertiary,
+    lineHeight: 14,
+  },
+  driveHudTimer: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    marginTop: 4,
+    textShadowColor: 'rgba(255,255,255,0.8)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
 
   zhBtn: {
     position: 'absolute',
     bottom: 48,
     right: 20,
     backgroundColor: '#1a1a2e',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderRadius: 27,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 5,
   },
-  zhBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  zhBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
   zhOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
@@ -897,4 +1049,31 @@ const s = StyleSheet.create({
   zhRetryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   zhCloseBtn: { marginTop: 12 },
   zhCloseText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
+
+  onboardOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  onboardBubble: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    backgroundColor: '#191919',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  onboardBubbleBottom: { bottom: 160 },
+  onboardBubbleTop: { top: 170 },
+  onboardText: {
+    color: '#fff', fontSize: 15, fontWeight: '600',
+    textAlign: 'center', lineHeight: 22, marginBottom: 14,
+  },
+  onboardBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 24, paddingVertical: 10, borderRadius: 18,
+  },
+  onboardBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 });

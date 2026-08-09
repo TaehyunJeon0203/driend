@@ -10,6 +10,7 @@ import { supabase } from '../../src/services/supabase';
 import {
   DRIVE_DETECT_NOTIFICATION_KEY, startMonitoring,
 } from '../../src/services/locationTracker';
+import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Profile = { id: string; username: string; best_zero_to_hundred_s: number | null };
@@ -225,6 +226,7 @@ export default function ProfileScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView style={s.container} contentContainerStyle={s.content}>
       <Text style={s.screenTitle}>프로필</Text>
 
@@ -412,6 +414,12 @@ export default function ProfileScreen() {
           : <Text style={s.deleteText}>회원 탈퇴</Text>}
       </TouchableOpacity>
     </ScrollView>
+
+    <OnboardingTip
+      storageKey="profile_onboarding_seen"
+      message={'차량 정보와 계정 설정을 관리하세요'}
+    />
+    </View>
   );
 }
 

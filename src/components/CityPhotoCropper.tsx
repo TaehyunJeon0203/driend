@@ -29,19 +29,23 @@ function buildGuidePath(polygons: LatLng[][], bbox: { minLat: number; maxLat: nu
     .join(' ');
 }
 
-export default function CityPhotoCropper({
-  visible,
-  imageUri,
-  polygons,
-  onCancel,
-  onConfirm,
-}: {
+type CropperProps = {
   visible: boolean;
   imageUri: string | null;
   polygons: LatLng[][];
   onCancel: () => void;
   onConfirm: (croppedUri: string) => void;
-}) {
+};
+
+// Modal 안에 다른 Modal을 중첩해서 열고 닫는 컴포넌트(CityPhotoGallery 등)에서 쓰기 위한,
+// <Modal> 래퍼가 없는 버전 — 네이티브 모달 전환이 겹치면 iOS에서 먹통이 되는 문제 회피용
+export function CityPhotoCropperContent({
+  visible,
+  imageUri,
+  polygons,
+  onCancel,
+  onConfirm,
+}: CropperProps) {
   const [frameSize, setFrameSize] = useState({ w: FRAME_MAX_W, h: FRAME_MAX_H });
   const viewShotRef = useRef<ViewShotRef>(null);
 
@@ -57,7 +61,7 @@ export default function CityPhotoCropper({
   const translateX = Animated.add(baseTranslate.x, panTranslate.x);
   const translateY = Animated.add(baseTranslate.y, panTranslate.y);
 
-  if (!visible || !imageUri) return null;
+  if (!visible || !imageUri || !polygons.length) return null;
 
   const { minLat, maxLat, minLng, maxLng } = bboxOfPolygons(polygons);
   const avgLatRad = ((minLat + maxLat) / 2) * (Math.PI / 180);
@@ -109,47 +113,57 @@ export default function CityPhotoCropper({
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={onCancel}>
-      <View style={s.overlay}>
-        <Text style={s.title}>사진을 원하는 위치로 옮기고 확대/축소하세요</Text>
+    <View style={s.overlay}>
+      <Text style={s.title}>사진을 원하는 위치로 옮기고 확대/축소하세요</Text>
 
-        <View style={[s.frameWrap, { width: frameW, height: frameH }]}>
-          <ViewShot ref={viewShotRef} style={{ width: frameW, height: frameH }} options={{ format: 'png', quality: 1 }}>
-            <View style={[s.frame, { width: frameW, height: frameH }]}>
-              <PanGestureHandler onGestureEvent={onPanEvent} onHandlerStateChange={onPanStateChange} minPointers={1} maxPointers={2}>
-                <Animated.View style={StyleSheet.absoluteFill}>
-                  <PinchGestureHandler onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
-                    <Animated.View style={StyleSheet.absoluteFill}>
-                      <Animated.Image
-                        source={{ uri: imageUri }}
-                        style={[
-                          s.image,
-                          { transform: [{ translateX }, { translateY }, { scale }] },
-                        ]}
-                        resizeMode="cover"
-                      />
-                    </Animated.View>
-                  </PinchGestureHandler>
-                </Animated.View>
-              </PanGestureHandler>
-            </View>
-          </ViewShot>
+      <View style={[s.frameWrap, { width: frameW, height: frameH }]}>
+        {/* PNG로 캡처하면 일부 기기(광색역 디스플레이)에서 16비트 PNG가 나와 서버(Jimp)가
+            못 읽는 문제가 있었음. 이 단계는 투명도가 필요 없어(마스킹은 서버에서 함) JPEG로 캡처 */}
+        <ViewShot ref={viewShotRef} style={{ width: frameW, height: frameH }} options={{ format: 'jpg', quality: 0.92 }}>
+          <View style={[s.frame, { width: frameW, height: frameH }]}>
+            <PanGestureHandler onGestureEvent={onPanEvent} onHandlerStateChange={onPanStateChange} minPointers={1} maxPointers={2}>
+              <Animated.View style={StyleSheet.absoluteFill}>
+                <PinchGestureHandler onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
+                  <Animated.View style={StyleSheet.absoluteFill}>
+                    <Animated.Image
+                      source={{ uri: imageUri }}
+                      style={[
+                        s.image,
+                        { transform: [{ translateX }, { translateY }, { scale }] },
+                      ]}
+                      resizeMode="cover"
+                    />
+                  </Animated.View>
+                </PinchGestureHandler>
+              </Animated.View>
+            </PanGestureHandler>
+          </View>
+        </ViewShot>
 
-          <Svg width={frameW} height={frameH} style={StyleSheet.absoluteFill} pointerEvents="none">
-            <Path d={`${outerPath} ${guidePath}`} fill="rgba(0,0,0,0.55)" fillRule="evenodd" />
-            <Path d={guidePath} fill="none" stroke="#fff" strokeWidth={2} />
-          </Svg>
-        </View>
-
-        <View style={s.btnRow}>
-          <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
-            <Text style={s.cancelText}>취소</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.confirmBtn} onPress={handleConfirm}>
-            <Text style={s.confirmText}>완료</Text>
-          </TouchableOpacity>
-        </View>
+        <Svg width={frameW} height={frameH} style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Path d={`${outerPath} ${guidePath}`} fill="rgba(0,0,0,0.55)" fillRule="evenodd" />
+          <Path d={guidePath} fill="none" stroke="#fff" strokeWidth={2} />
+        </Svg>
       </View>
+
+      <View style={s.btnRow}>
+        <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
+          <Text style={s.cancelText}>취소</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.confirmBtn} onPress={handleConfirm}>
+          <Text style={s.confirmText}>완료</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// 단독으로 쓰는 화면(stats.tsx 등)을 위한 기본 export — 자체 <Modal>로 감쌈
+export default function CityPhotoCropper(props: CropperProps) {
+  if (!props.visible || !props.imageUri || !props.polygons.length) return null;
+  return (
+    <Modal visible={props.visible} animationType="fade" transparent onRequestClose={props.onCancel}>
+      <CityPhotoCropperContent {...props} />
     </Modal>
   );
 }

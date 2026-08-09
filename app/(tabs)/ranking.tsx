@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import { supabase } from '../../src/services/supabase';
+import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
 
 type Tab = 'global' | 'friends';
@@ -322,6 +323,11 @@ export default function RankingScreen() {
           </ScrollView>
         </View>
       </Modal>
+
+      <OnboardingTip
+        storageKey="ranking_onboarding_seen"
+        message={'다른 유저들과 순위를 비교해보세요\n카테고리를 눌러 항목을 바꿀 수 있어요'}
+      />
     </View>
   );
 }

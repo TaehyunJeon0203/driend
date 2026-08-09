@@ -9,19 +9,33 @@ const corsHeaders = {
 
 type Coord = { latitude: number; longitude: number };
 
-function isInsideAnyRing(px: number, py: number, rings: { x: number; y: number }[][]): boolean {
-  for (const ring of rings) {
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const xi = ring[i].x, yi = ring[i].y;
-      const xj = ring[j].x, yj = ring[j].y;
-      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
+// 한 링(고리)이 주어진 스캔라인(y+0.5)과 교차하는 x구간들 (even-odd 규칙)
+function ringRowSpans(py: number, ring: { x: number; y: number }[]): [number, number][] {
+  const xs: number[] = [];
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i].x, yi = ring[i].y;
+    const xj = ring[j].x, yj = ring[j].y;
+    if ((yi > py) !== (yj > py)) {
+      xs.push((xj - xi) * (py - yi) / (yj - yi) + xi);
     }
-    if (inside) return true;
   }
-  return false;
+  xs.sort((a, b) => a - b);
+  const spans: [number, number][] = [];
+  for (let i = 0; i + 1 < xs.length; i += 2) spans.push([xs[i], xs[i + 1]]);
+  return spans;
+}
+
+// 여러 링(도시가 섬 등으로 나뉜 경우) 중 하나라도 포함하면 내부로 취급 — 구간 합집합
+function mergeSpans(spans: [number, number][]): [number, number][] {
+  if (!spans.length) return [];
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [spans[0]];
+  for (let i = 1; i < spans.length; i++) {
+    const last = merged[merged.length - 1];
+    if (spans[i][0] <= last[1]) last[1] = Math.max(last[1], spans[i][1]);
+    else merged.push(spans[i]);
+  }
+  return merged;
 }
 
 Deno.serve(async (req) => {
@@ -82,13 +96,18 @@ Deno.serve(async (req) => {
       }))
     );
 
-    // 폴리곤 바깥 픽셀 투명화
+    // 폴리곤 바깥 픽셀 투명화 — 스캔라인 방식: 행마다 교차점을 한 번만 계산해
+    // (픽셀 수 × 정점 수) 대신 (행 수 × 정점 수)로 복잡도를 낮춤
     const data = image.bitmap.data as Buffer;
     for (let y = 0; y < height; y++) {
+      const py = y + 0.5;
+      const rowSpans = mergeSpans(pixelRings.flatMap((ring) => ringRowSpans(py, ring)));
+      let spanIdx = 0;
       for (let x = 0; x < width; x++) {
-        if (!isInsideAnyRing(x + 0.5, y + 0.5, pixelRings)) {
-          data[(y * width + x) * 4 + 3] = 0;
-        }
+        const px = x + 0.5;
+        while (spanIdx < rowSpans.length && px > rowSpans[spanIdx][1]) spanIdx++;
+        const inside = spanIdx < rowSpans.length && px >= rowSpans[spanIdx][0];
+        if (!inside) data[(y * width + x) * 4 + 3] = 0;
       }
     }
 

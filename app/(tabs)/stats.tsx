@@ -9,6 +9,7 @@ import { supabase } from '../../src/services/supabase';
 import { setActiveTripId } from '../../src/services/locationTracker';
 import { clipAndUploadCityPhoto } from '../../src/services/cityPhotoClipper';
 import CityPhotoCropper from '../../src/components/CityPhotoCropper';
+import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
 import CITY_DATA from '../../assets/korea-cities.json';
 
@@ -544,6 +545,11 @@ export default function StatsScreen() {
         setCropTarget(null);
         if (target) uploadCroppedPhoto(target.city, uri);
       }}
+    />
+
+    <OnboardingTip
+      storageKey="stats_onboarding_seen"
+      message={'주행 기록과 월별 통계를 확인하세요\n방문한 도시를 눌러 사진을 등록할 수 있어요'}
     />
     </View>
   );
