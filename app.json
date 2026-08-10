@@ -54,6 +54,9 @@
           "nativeAppKey": "83493d18b522a2aa69a658dc228f55ca",
           "ios": {
             "handleKakaoOpenUrl": true
+          },
+          "android": {
+            "authCodeHandlerActivity": true
           }
         }
       ],

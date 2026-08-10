@@ -17,3 +17,7 @@ app/src/main/java/inline/
 
 # Bundle artifacts
 *.jsbundle
+
+# Release signing (never commit — losing this = can't update the Play Store listing)
+app/driend-release.keystore
+keystore.properties

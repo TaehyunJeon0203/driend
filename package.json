@@ -46,7 +46,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "device": "./scripts/build-install.sh"
+    "device": "./scripts/build-install.sh",
+    "device:android": "./scripts/build-install-android.sh"
   },
   "private": true
 }
