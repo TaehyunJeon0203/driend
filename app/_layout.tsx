@@ -28,12 +28,7 @@ Notifications.setNotificationHandler({
 
 async function handleDeepLink(url: string) {
   const path = url.replace(/^driend:\/\/+/, '');
-  if (path === 'start-drive') {
-    if (!isTracking()) {
-      await startTracking();
-    }
-    router.replace('/(tabs)');
-  } else if (path === 'stop-drive') {
+  if (path === 'stop-drive') {
     if (isTracking()) {
       await stopTracking();
     }
