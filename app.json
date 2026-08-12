@@ -12,6 +12,10 @@
       "bundleIdentifier": "com.driend.app",
       "buildNumber": "1",
       "usesAppleSignIn": true,
+      "appleTeamId": "US425RN9N9",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.driend.app"]
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "주행 경로를 기록하기 위해 위치 정보가 필요합니다.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "주행 중 화면을 보고 있지 않아도 경로 기록이 끊기지 않도록, 그리고 주행이 감지되면 알림으로 기록 시작을 제안하기 위해 앱을 사용하지 않는 동안에도 위치 정보를 확인합니다. 설정에서 언제든 끌 수 있습니다.",
@@ -96,7 +100,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#FFFFFF"
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ]
   }
 }
