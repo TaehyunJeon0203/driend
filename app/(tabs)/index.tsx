@@ -27,6 +27,7 @@ import {
   startTracking, stopTracking, isTracking,
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
+import { consumePendingWidgetStartDrive } from '../../src/services/widgetBridge';
 import { buildCityIndex, bboxIntersects, matchCity, matchVisitedCities, padBBox, type BBox } from '../../src/services/geo';
 import { addCityPhotos } from '../../src/services/cityPhotos';
 import CityPhotoGallery from '../../src/components/CityPhotoGallery';
@@ -601,6 +602,32 @@ export default function MapScreen() {
     setZhVisible(false);
   };
 
+  const startDriveFlow = useCallback(async () => {
+    isFirstPoint.current = true;
+
+    const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
+    const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+    if (fgStatus === 'undetermined' || bgStatus === 'undetermined') {
+      await new Promise<void>((resolve) => {
+        Alert.alert(
+          '위치 접근 권한 안내',
+          '주행 경로를 기록하려면 위치 접근이 필요해요. 화면을 보고 있지 않은 동안에도 경로가 끊기지 않도록 다음 화면에서 "항상 허용"을 선택해주세요.',
+          [{ text: '확인', onPress: () => resolve() }]
+        );
+      });
+    }
+
+    let ok = false;
+    try { ok = await startTracking(); } catch (e: any) {
+      Alert.alert('오류', e.message ?? String(e)); return;
+    }
+    if (!ok) {
+      Alert.alert('위치 권한 필요', '설정 > 개인정보 보호 > 위치 서비스에서 Driend를 "항상"으로 설정해주세요.');
+      return;
+    }
+    setTracking(true);
+  }, []);
+
   const toggleTracking = async () => {
     if (toggling) return;
     setToggling(true);
@@ -608,34 +635,18 @@ export default function MapScreen() {
       if (tracking) {
         await stopTracking();
       } else {
-        isFirstPoint.current = true;
-
-        const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
-        const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
-        if (fgStatus === 'undetermined' || bgStatus === 'undetermined') {
-          await new Promise<void>((resolve) => {
-            Alert.alert(
-              '위치 접근 권한 안내',
-              '주행 경로를 기록하려면 위치 접근이 필요해요. 화면을 보고 있지 않은 동안에도 경로가 끊기지 않도록 다음 화면에서 "항상 허용"을 선택해주세요.',
-              [{ text: '확인', onPress: () => resolve() }]
-            );
-          });
-        }
-
-        let ok = false;
-        try { ok = await startTracking(); } catch (e: any) {
-          Alert.alert('오류', e.message ?? String(e)); return;
-        }
-        if (!ok) {
-          Alert.alert('위치 권한 필요', '설정 > 개인정보 보호 > 위치 서비스에서 Driend를 "항상"으로 설정해주세요.');
-          return;
-        }
-        setTracking(true);
+        await startDriveFlow();
       }
     } finally {
       setToggling(false);
     }
   };
+
+  useFocusEffect(useCallback(() => {
+    if (tracking || toggling || !consumePendingWidgetStartDrive()) return;
+    setToggling(true);
+    startDriveFlow().finally(() => setToggling(false));
+  }, [startDriveFlow, tracking, toggling]));
 
   return (
     <View style={s.container}>
