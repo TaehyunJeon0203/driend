@@ -5,6 +5,7 @@ import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
 import { processMatchAsync } from './mapMatcher';
 import { buildCityIndex, matchVisitedCities } from './geo';
+import { createStopCoordinator } from './stopCoordinator';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type City = { code: string; name: string; province_code: string; center: Coordinate; polygons: Coordinate[][] };
@@ -31,6 +32,7 @@ const DETECT_SPEED_MPS = 13 / 3.6;       // 주행 감지 기준 속도
 let driveId: string | null = null;
 const buffer: Coordinate[] = [];
 const driveCoords: Coordinate[] = [];
+let flushPromise: Promise<void> | null = null;
 
 let runningDistanceKm = 0;
 let prevCoord: Coordinate | null = null;
@@ -155,7 +157,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     }
   }
 
-  if (buffer.length >= FLUSH_THRESHOLD) flushBuffer();
+  if (buffer.length >= FLUSH_THRESHOLD) await flushBuffer();
 });
 
 const REGION_TO_KO: Record<string, string> = {
@@ -294,6 +296,12 @@ export async function startTracking(): Promise<boolean> {
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (alreadyRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
+  await startDriveLocationUpdates();
+
+  return true;
+}
+
+async function startDriveLocationUpdates(): Promise<void> {
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
     distanceInterval: 5,
@@ -305,21 +313,27 @@ export async function startTracking(): Promise<boolean> {
       notificationColor: '#047857',
     },
   });
-
-  return true;
 }
 
-export async function stopTracking(): Promise<string | null> {
+async function performStopTracking(stoppingDriveId: string | null): Promise<string | null> {
+  if (!stoppingDriveId) return null;
+
+  const distanceKm = runningDistanceKm;
+  const sampleCoords = driveCoords.slice();
+  const startCoord = firstCoord;
+  const endCoord = prevCoord;
+  const stoppingMaxSpeedMs = maxSpeedMs;
+
   const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (isRunning) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
   Notifications.dismissAllNotificationsAsync();
-  await flushBuffer();
-
-  if (!driveId) return null;
-
-  const distanceKm = runningDistanceKm;
-  const sampleCoords = driveCoords.slice();
+  try {
+    await flushBuffer(stoppingDriveId);
+  } catch (error) {
+    if (driveId === stoppingDriveId) await startDriveLocationUpdates();
+    throw error;
+  }
 
   const { data: { session } } = await supabase.auth.getSession();
   const user = session?.user ?? null;
@@ -327,12 +341,12 @@ export async function stopTracking(): Promise<string | null> {
   let startAddress: string | null = null;
   let endAddress: string | null = null;
   try {
-    if (firstCoord) {
-      const [g] = await Location.reverseGeocodeAsync(firstCoord);
+    if (startCoord) {
+      const [g] = await Location.reverseGeocodeAsync(startCoord);
       startAddress = g.city ?? g.district ?? REGION_TO_KO[g.region ?? ''] ?? g.region ?? null;
     }
-    if (prevCoord) {
-      const [g] = await Location.reverseGeocodeAsync(prevCoord);
+    if (endCoord) {
+      const [g] = await Location.reverseGeocodeAsync(endCoord);
       endAddress = g.city ?? g.district ?? REGION_TO_KO[g.region ?? ''] ?? g.region ?? null;
     }
   } catch {}
@@ -342,36 +356,55 @@ export async function stopTracking(): Promise<string | null> {
     .update({
       ended_at: new Date().toISOString(),
       distance_km: distanceKm,
-      max_speed_kmh: maxSpeedMs * 3.6,
+      max_speed_kmh: stoppingMaxSpeedMs * 3.6,
       start_address: startAddress,
       end_address: endAddress,
     })
-    .eq('id', driveId);
+    .eq('id', stoppingDriveId);
 
   if (user && sampleCoords.length > 0) {
     recordVisitedCities(user.id, sampleCoords);
   }
 
-  const id = driveId;
-  driveId = null;
-  resetDriveState();
+  if (driveId === stoppingDriveId) {
+    driveId = null;
+    resetDriveState();
+    stopListeners.forEach((cb) => cb());
+    await startMonitoring();
+  }
 
-  stopListeners.forEach((cb) => cb());
+  processMatchAsync(stoppingDriveId).catch(() => {});
 
-  await startMonitoring();
-
-  if (id) processMatchAsync(id).catch(() => {});
-
-  return id;
+  return stoppingDriveId;
 }
 
-async function flushBuffer() {
-  if (!buffer.length || !driveId) return;
-  const points = buffer.splice(0);
-  const rows = points.map((p) => ({
-    drive_id: driveId!,
-    location: `POINT(${p.longitude} ${p.latitude})`,
-    recorded_at: new Date().toISOString(),
-  }));
-  await supabase.from('route_points').insert(rows);
+const stopCoordinator = createStopCoordinator(performStopTracking);
+
+export function stopTracking(): Promise<string | null> {
+  return stopCoordinator.stop(driveId);
+}
+
+async function flushBuffer(expectedDriveId: string | null = driveId): Promise<void> {
+  if (flushPromise) return flushPromise;
+
+  flushPromise = (async () => {
+    while (buffer.length && expectedDriveId && driveId === expectedDriveId) {
+      const points = buffer.splice(0);
+      const rows = points.map((p) => ({
+        drive_id: expectedDriveId,
+        location: `POINT(${p.longitude} ${p.latitude})`,
+        recorded_at: new Date().toISOString(),
+      }));
+      const { error } = await supabase.from('route_points').insert(rows);
+      if (error) {
+        buffer.unshift(...points);
+        throw error;
+      }
+    }
+  })();
+  try {
+    await flushPromise;
+  } finally {
+    flushPromise = null;
+  }
 }
