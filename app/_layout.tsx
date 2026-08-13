@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AppState, Linking } from 'react-native';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -25,16 +25,6 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
-
-async function handleDeepLink(url: string) {
-  const path = url.replace(/^driend:\/\/+/, '');
-  if (path === 'stop-drive') {
-    if (isTracking()) {
-      await stopTracking();
-    }
-    router.replace('/(tabs)');
-  }
-}
 
 async function handleAuthSession(session: Session | null) {
   if (!session) {
@@ -102,15 +92,13 @@ export default function RootLayout() {
       }
     });
 
-    // 딥링크 처리
-    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
-    const linkSub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
-
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) cleanupOrphanedDrives();
       // supabase-js: onAuthStateChange/getSession 콜백 안에서 바로 다른 supabase 호출을 await하면
       // 내부 세션 락이 걸려 이후 모든 supabase 호출이 멈추는 문제가 있음 → setTimeout으로 한 틱 미룸
-      setTimeout(() => handleAuthSession(session), 0);
+      setTimeout(() => {
+        if (session) cleanupOrphanedDrives();
+        handleAuthSession(session);
+      }, 0);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -125,7 +113,6 @@ export default function RootLayout() {
 
     return () => {
       notifSub.remove();
-      linkSub.remove();
       subscription.unsubscribe();
       appStateSub.remove();
     };
