@@ -27,9 +27,10 @@ import {
   startTracking, stopTracking, isTracking,
   addPointListener, addStopListener,
 } from '../../src/services/locationTracker';
-import { consumePendingWidgetStartDrive } from '../../src/services/widgetBridge';
+import { consumePendingWidgetStartDrive, consumePendingWidgetStopDrive } from '../../src/services/widgetBridge';
 import { buildCityIndex, bboxIntersects, matchCity, matchVisitedCities, padBBox, type BBox } from '../../src/services/geo';
 import { addCityPhotos } from '../../src/services/cityPhotos';
+import { calculateZeroToHundredSeconds, type SpeedSample } from '../../src/services/zeroToHundred';
 import CityPhotoGallery from '../../src/components/CityPhotoGallery';
 import { colors } from '../../src/theme';
 import CITY_DATA from '../../assets/korea-cities.json';
@@ -74,14 +75,6 @@ const CITY_BBOX_MAP = new Map(CITY_INDEX.map(({ city, bbox }) => [city.code, bbo
 const PHOTO_LOD_ENTER_HIGH_ZOOM = 7.2; // 이 이상 확대 시 원본 정밀도로 전환
 const PHOTO_LOD_ENTER_LOW_ZOOM = 6.6;  // 이 이하 축소 시 단순화된 데이터셋으로 전환
 const PHOTO_VIEWPORT_PAD_RATIO = 0.3;  // 화면 경계에서 지역이 갑자기 나타나지 않도록 여유분
-
-// GPS speed가 실제 순간속도보다 지연 반영되는 만큼 보정 (실측 페어 2건 평균: 0.65s, 0.70s)
-// 실측 대비 여전히 0.2~0.3s 느리게 나와 추가 보정. 오차가 남더라도 실제보다 느리게 나오는
-// 것보단 빠르게 나오는 쪽이 사용자 체감이 낫다고 판단해 범위의 상단(0.3s)으로 반영
-const ZH_GPS_LAG_OFFSET_MS = 980;
-// 100km/h 교차 시점 추정에 쓰는 가속률을 최근 몇 구간 평균으로 낼지. 너무 크면 초반 저속 구간까지
-// 섞여 최근 가속 국면과 무관해지고, 너무 작으면 GPS 노이즈에 취약해짐
-const ZH_RATE_WINDOW_SEGMENTS = 4;
 
 // 주행 경로선 굵기가 줌 레벨과 무관하게 고정이라 확대해도 선이 얇아 보이던 문제 보정.
 // 기준 줌(현재 굵기 값들이 설계된 지점) 대비 줌 1당 굵기를 비례 확대/축소함
@@ -397,14 +390,22 @@ export default function MapScreen() {
 
   const photoVisibleCities = useMemo(() => {
     const source = photoLowDetail ? citiesWithMetaSimplified : citiesWithMeta;
-    const unvisited = source.filter((c) => !c.visited);
-    if (!photoVisibleRegion) return unvisited;
+    if (!photoVisibleRegion) return source;
     const padded = padBBox(photoVisibleRegion, PHOTO_VIEWPORT_PAD_RATIO);
-    return unvisited.filter((c) => {
+    return source.filter((c) => {
       const bbox = CITY_BBOX_MAP.get(c.code);
       return bbox ? bboxIntersects(bbox, padded) : true;
     });
   }, [photoLowDetail, citiesWithMeta, citiesWithMetaSimplified, photoVisibleRegion]);
+
+  const photoVisibleUnvisitedCities = useMemo(
+    () => photoVisibleCities.filter((city) => !city.visited),
+    [photoVisibleCities],
+  );
+  const photoVisibleVisitedCities = useMemo(
+    () => photoVisibleCities.filter((city) => city.visited),
+    [photoVisibleCities],
+  );
 
   // 방문 기록을 현재 시/군/구 데이터셋 기준으로 재계산 (세션당 1회, 데이터셋이 바뀌어도 항상 재확인)
   useEffect(() => {
@@ -529,17 +530,11 @@ export default function MapScreen() {
     });
 
     // GPS: 속도 표시 + 100km/h 도달 감지
-    let prevKmh = 0;
-    let prevTs = 0;
-    let lastGpsCbTs = 0;
-    const gpsHistory: { ts: number; kmh: number }[] = [];
+    const gpsHistory: SpeedSample[] = [];
 
     zhSubRef.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 0 },
       (loc) => {
-        const cbNow = Date.now();
-        lastGpsCbTs = cbNow;
-
         const kmh = Math.max(0, (loc.coords.speed ?? 0) * 3.6);
         const ts = loc.timestamp;
 
@@ -547,48 +542,38 @@ export default function MapScreen() {
 
         // 측정 중 GPS 샘플 기록 (이전 가속 비율 계산용)
         if (zhStateRef.current === 'measuring' && kmh > 0) {
-          gpsHistory.push({ ts, kmh });
+          gpsHistory.push({ timestampMs: ts, speedKmh: kmh });
         }
 
         if (zhStateRef.current === 'measuring' && kmh >= 100 && zhStartRef.current) {
+          // 650/700ms 실측 지연 평균에 최근 남은 약 0.1s 오차를 더한 단일 보정값으로 계산한다.
+          const elapsed = calculateZeroToHundredSeconds({
+            startTimestampMs: zhStartRef.current,
+            samples: gpsHistory,
+          });
+          if (elapsed == null) return;
           if (zhTimerRef.current) { clearInterval(zhTimerRef.current); zhTimerRef.current = null; }
-
-          // 최근 N구간 평균 가속 비율로 100km/h 교차 시점 추정
-          let endTs = ts;
-          if (prevKmh < 100 && prevTs > 0) {
-            const prevSamples = gpsHistory.slice(0, -1).slice(-(ZH_RATE_WINDOW_SEGMENTS + 1));
-            const deltas: number[] = [];
-            for (let i = 1; i < prevSamples.length; i++) {
-              const dKmh = prevSamples[i].kmh - prevSamples[i - 1].kmh;
-              const dTs = prevSamples[i].ts - prevSamples[i - 1].ts;
-              if (dTs > 0 && dKmh > 0 && prevSamples[i - 1].kmh > 5) {
-                deltas.push(dKmh / dTs); // km/h per ms
-              }
-            }
-            const avgRate = deltas.length >= 2
-              ? deltas.reduce((a, b) => a + b, 0) / deltas.length
-              : (kmh - prevKmh) / (ts - prevTs); // fallback: linear
-            endTs = prevTs + (100 - prevKmh) / avgRate;
-          }
-
-          const correctedMs = Math.max(0, (endTs - zhStartRef.current) - ZH_GPS_LAG_OFFSET_MS);
-          const elapsed = Math.round(correctedMs / 100) / 10;
           setZhResult(elapsed);
           setZhState('done');
           zhStateRef.current = 'done';
           zhSubRef.current?.remove();
           zhSubRef.current = null;
           if (elapsed > 0 && elapsed < 60 && isFinite(elapsed)) {
-            supabase.auth.getSession().then(async ({ data: { session } }) => {
+            supabase.auth.getSession().then(({ data: { session } }) => {
               if (!session?.user) return;
-              const { error } = await supabase.rpc('save_best_zero_to_hundred', { p_user_id: session.user.id, p_seconds: elapsed });
-              if (error) console.error('save_best_zero_to_hundred failed:', error);
+              setTimeout(() => {
+                supabase.rpc('save_best_zero_to_hundred', {
+                  p_user_id: session.user.id,
+                  p_seconds: elapsed,
+                }).then(({ error }) => {
+                  if (error) console.error('save_best_zero_to_hundred failed:', error);
+                }, (error: unknown) => {
+                  console.error('save_best_zero_to_hundred rejected:', error);
+                });
+              }, 0);
             });
           }
         }
-
-        prevKmh = kmh;
-        prevTs = ts;
       }
     );
   };
@@ -637,15 +622,52 @@ export default function MapScreen() {
       } else {
         await startDriveFlow();
       }
+    } catch {
+      Alert.alert('주행 종료 실패', '경로 저장에 실패해 기록을 계속하고 있어요. 네트워크 연결 후 다시 시도해주세요.');
     } finally {
       setToggling(false);
     }
   };
 
   useFocusEffect(useCallback(() => {
+    if (consumePendingWidgetStopDrive()) {
+      if (!isTracking() || toggling) return;
+      Alert.alert(
+        '주행을 종료할까요?',
+        '외부 요청으로 주행 종료 화면을 열었어요. 확인하면 현재 위치 기록을 종료합니다.',
+        [
+          { text: '취소', style: 'cancel' },
+          {
+            text: '주행 종료',
+            style: 'destructive',
+            onPress: () => {
+              setToggling(true);
+              stopTracking()
+                .catch(() => {
+                  Alert.alert('주행 종료 실패', '경로 저장에 실패해 기록을 계속하고 있어요. 네트워크 연결 후 다시 시도해주세요.');
+                })
+                .finally(() => setToggling(false));
+            },
+          },
+        ],
+      );
+      return;
+    }
     if (tracking || toggling || !consumePendingWidgetStartDrive()) return;
-    setToggling(true);
-    startDriveFlow().finally(() => setToggling(false));
+    Alert.alert(
+      '주행을 시작할까요?',
+      '위젯에서 주행 시작을 요청했어요. 확인하면 위치 기록을 시작합니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '주행 시작',
+          onPress: () => {
+            setToggling(true);
+            startDriveFlow().finally(() => setToggling(false));
+          },
+        },
+      ],
+    );
   }, [startDriveFlow, tracking, toggling]));
 
   return (
@@ -704,7 +726,7 @@ export default function MapScreen() {
 
         {mapMode === 'photo' && (
           <>
-            {photoVisibleCities.flatMap((c) =>
+            {photoVisibleUnvisitedCities.flatMap((c) =>
               c.polygons.map((coords, i) => (
                 <NaverMapPolygonOverlay
                   key={`poly-${c.code}-${i}`}
@@ -716,10 +738,11 @@ export default function MapScreen() {
               ))
             )}
 
-            {citiesWithMeta.filter((c) => c.visited).flatMap((c) => {
+            {photoVisibleVisitedCities.flatMap((c) => {
               // 사진이 없으면 탭은 아무 동작도 하지 않음 (등록은 롱프레스로만)
               const onTapCity = () =>
                 c.visitedId && setGalleryTarget({ visitedId: c.visitedId, cityCode: c.code, cityName: c.name });
+              const photoRegion = CITY_REGION_MAP.get(c.code);
               return [
                 ...c.polygons.map((coords, i) => (
                   <NaverMapPolygonOverlay
@@ -730,12 +753,12 @@ export default function MapScreen() {
                     outlineColor="rgba(255,255,255,0.95)"
                   />
                 )),
-                ...(c.photoUrl ? [
+                ...(c.photoUrl && photoRegion ? [
                   <NaverMapGroundOverlay
                     key={`photo-${c.code}`}
                     globalZIndex={1}
                     image={{ httpUri: c.photoUrl }}
-                    region={CITY_REGION_MAP.get(c.code)!}
+                    region={photoRegion}
                     onTap={onTapCity}
                   />,
                   // 지상 오버레이(사진)가 폴리곤 테두리를 덮어버려서, 테두리만 순수 선으로 다시 그림
