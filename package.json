@@ -40,9 +40,12 @@
     "@types/react": "~19.2.2",
     "babel-preset-expo": "^57.0.6",
     "simplify-js": "^1.2.4",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
   },
   "scripts": {
+    "test": "vitest run",
+    "test:zero-to-hundred": "vitest run src/services/zeroToHundred.test.ts",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
