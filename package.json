@@ -5,7 +5,8 @@
   "dependencies": {
     "@bacons/apple-targets": "^5.0.0",
     "@expo/cli": "^56.1.16",
-    "@mj-studio/react-native-naver-map": "^2.9.0",
+    "@expo/vector-icons": "^15.0.2",
+    "@mj-studio/react-native-naver-map": "2.9.0",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-kakao/core": "^2.4.5",
     "@react-native-kakao/user": "^2.4.5",
@@ -37,13 +38,16 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@types/node": "26.0.1",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "^57.0.6",
+    "patch-package": "^8.0.1",
     "simplify-js": "^1.2.4",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   },
   "scripts": {
+    "postinstall": "patch-package",
     "test": "vitest run",
     "test:zero-to-hundred": "vitest run src/services/zeroToHundred.test.ts",
     "start": "expo start",
