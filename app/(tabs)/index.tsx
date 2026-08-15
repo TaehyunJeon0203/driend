@@ -7,11 +7,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
-import {
-  LongPressGestureHandler, State,
-  type LongPressGestureHandlerEventPayload,
-  type HandlerStateChangeEvent,
-} from 'react-native-gesture-handler';
 import Svg, { Path } from 'react-native-svg';
 import {
   NaverMapView,
@@ -432,45 +427,38 @@ export default function MapScreen() {
 
   // 롱프레스 = 사진 등록(여러 장 선택 가능, 첫 장이 자동 대표사진). 관리(삭제/대표사진 변경)는 탭 -> 갤러리에서.
   // 롱프레스 = 사진 등록 (갤러리를 열고 바로 사진 추가 흐름 시작). 관리(삭제/대표사진 변경)는 탭 -> 갤러리에서.
-  const handleMapLongPress = (event: HandlerStateChangeEvent<LongPressGestureHandlerEventPayload>) => {
-    if (mapMode !== 'photo' || event.nativeEvent.state !== State.ACTIVE) return;
-    const { x, y } = event.nativeEvent;
+  const handleMapLongPress = ({ latitude, longitude }: LatLng) => {
+    if (mapMode !== 'photo') return;
+    const city = matchCity({ latitude, longitude }, CITY_INDEX);
+    if (!city) return;
 
-    (async () => {
-      const result = await mapRef.current?.screenToCoordinate({ screenX: x, screenY: y });
-      if (!result?.isValid) return;
+    const meta = citiesWithMeta.find((c) => c.code === city.code);
+    if (!meta) return;
+    if (!meta.visited || !meta.visitedId) {
+      Alert.alert(meta.name, '아직 방문하지 않은 지역이에요. 주행 기록이 있어야 사진을 등록할 수 있어요.');
+      return;
+    }
+    const visitedId = meta.visitedId;
 
-      const city = matchCity({ latitude: result.latitude, longitude: result.longitude }, CITY_INDEX);
-      if (!city) return;
-
-      const meta = citiesWithMeta.find((c) => c.code === city.code);
-      if (!meta) return;
-      if (!meta.visited || !meta.visitedId) {
-        Alert.alert(meta.name, '아직 방문하지 않은 지역이에요. 주행 기록이 있어야 사진을 등록할 수 있어요.');
-        return;
-      }
-      const visitedId = meta.visitedId;
-
-      if (!meta.photoUrl) {
-        // 등록된 사진이 없는 도시 — 등록 여부부터 확인
-        Alert.alert(meta.name, '이 지역에 사진을 등록할까요?', [
-          { text: '취소', style: 'cancel' },
-          {
-            text: '등록',
-            onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, autoAdd: true }),
-          },
-        ]);
-      } else {
-        // 이미 사진이 있는 도시 — 수정(추가/삭제/순서/대표사진) 여부 확인
-        Alert.alert(meta.name, undefined, [
-          { text: '취소', style: 'cancel' },
-          {
-            text: '수정',
-            onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, startInEdit: true }),
-          },
-        ]);
-      }
-    })();
+    if (!meta.photoUrl) {
+      // 등록된 사진이 없는 도시 — 등록 여부부터 확인
+      Alert.alert(meta.name, '이 지역에 사진을 등록할까요?', [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '등록',
+          onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, autoAdd: true }),
+        },
+      ]);
+    } else {
+      // 이미 사진이 있는 도시 — 수정(추가/삭제/순서/대표사진) 여부 확인
+      Alert.alert(meta.name, undefined, [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '수정',
+          onPress: () => setGalleryTarget({ visitedId, cityCode: meta.code, cityName: meta.name, startInEdit: true }),
+        },
+      ]);
+    }
   };
 
   const openZeroHundred = () => {
@@ -672,11 +660,6 @@ export default function MapScreen() {
 
   return (
     <View style={s.container}>
-      <LongPressGestureHandler
-        onHandlerStateChange={handleMapLongPress}
-        minDurationMs={500}
-        enabled={mapMode === 'photo'}
-      >
       <View style={s.map}>
       <NaverMapView
         ref={mapRef}
@@ -698,6 +681,7 @@ export default function MapScreen() {
           mapMode === 'drive' ? handleDriveCameraIdle : undefined
         }
         onCameraChanged={mapMode === 'drive' ? handleDriveCameraChanged : undefined}
+        onLongPressMap={mapMode === 'photo' ? handleMapLongPress : undefined}
       >
         {mapMode === 'drive' && (
           <>
@@ -779,7 +763,6 @@ export default function MapScreen() {
         )}
       </NaverMapView>
       </View>
-      </LongPressGestureHandler>
 
       {/* 모드 토글 */}
       <View style={s.modeToggle}>
