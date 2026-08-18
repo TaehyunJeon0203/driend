@@ -60,6 +60,7 @@ const PROVINCE_COLOR_MAP = new Map(
 );
 const PHOTO_MAP_BG = '#122238';
 const ONBOARDING_SEEN_KEY = 'map_onboarding_seen';
+const WIDGET_ONBOARDING_SEEN_KEY = 'widget_onboarding_seen';
 const CITY_BBOX_MAP = new Map(CITY_INDEX.map(({ city, bbox }) => [city.code, bbox]));
 
 // 사진 모드 축소/확대에 따른 배경 렌더링 정밀도 전환 임계값 (경계값 근처 떨림 방지용 히스테리시스).
@@ -124,6 +125,7 @@ export default function MapScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [galleryTarget, setGalleryTarget] = useState<{ visitedId: string; cityCode: string; cityName: string; autoAdd?: boolean; startInEdit?: boolean } | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2>(0);
+  const [widgetTip, setWidgetTip] = useState(false);
   const [photoLowDetail, setPhotoLowDetail] = useState(true);
   const photoLowDetailRef = useRef(true);
   const [photoVisibleRegion, setPhotoVisibleRegion] = useState<BBox | null>(null);
@@ -182,7 +184,15 @@ export default function MapScreen() {
     AsyncStorage.getItem(ONBOARDING_SEEN_KEY).then((seen) => {
       if (seen !== 'true') setOnboardingStep(1);
     });
+    AsyncStorage.getItem(WIDGET_ONBOARDING_SEEN_KEY).then((seen) => {
+      if (seen !== 'true') setWidgetTip(true);
+    });
   }, []);
+
+  const dismissWidgetTip = () => {
+    setWidgetTip(false);
+    AsyncStorage.setItem(WIDGET_ONBOARDING_SEEN_KEY, 'true');
+  };
 
   const advanceOnboarding = () => {
     setMapMode('photo');
@@ -797,6 +807,18 @@ export default function MapScreen() {
             <Text style={s.zhBtnText}>0→100</Text>
           </TouchableOpacity>
 
+          {widgetTip && !tracking && !toggling && onboardingStep === 0 && (
+            <View style={s.widgetTipBubble} pointerEvents="box-none">
+              <Text style={s.widgetTipTitle}>홈 화면 위젯으로 바로 시작</Text>
+              <Text style={s.widgetTipBody}>
+                홈 화면에 Driend 위젯을 추가하면{'\n'}앱을 켜지 않고도 한 번에 주행을 시작할 수 있어요.
+              </Text>
+              <TouchableOpacity style={s.widgetTipBtn} onPress={dismissWidgetTip}>
+                <Text style={s.widgetTipBtnText}>알겠어요</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={s.driveHud} pointerEvents="box-none">
             <View style={s.driveHudStatusRow}>
               <View style={[s.driveHudDot, tracking && s.driveHudDotActive]} />
@@ -955,6 +977,43 @@ const s = StyleSheet.create({
   trackBtnActive: { backgroundColor: '#111111' },
   trackBtnDisabled: { opacity: 0.7 },
   trackText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  widgetTipBubble: {
+    position: 'absolute',
+    bottom: 124,
+    left: 24,
+    right: 24,
+    backgroundColor: '#191919',
+    borderRadius: 16,
+    padding: 18,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  widgetTipTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  widgetTipBody: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 13,
+    fontWeight: '400',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  widgetTipBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 9,
+    borderRadius: 16,
+  },
+  widgetTipBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   driveHud: {
     position: 'absolute',
     top: 116,
