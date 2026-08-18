@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Driend 계정 삭제 안내</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --primary: #047857;
+    --primary-hover: #065f46;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding: 24px 0;
+  }
+  .logo {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--primary);
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 4px;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 24px;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+  h2:first-child { margin-top: 0; }
+  p { color: var(--muted); font-size: 15px; margin-bottom: 12px; }
+  .dev {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 4px;
+  }
+  ol, ul {
+    margin: 12px 0 16px 0;
+    padding-left: 22px;
+    color: var(--text);
+    font-size: 15px;
+  }
+  ol li, ul li { margin-bottom: 8px; }
+  .method-label {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+  }
+  .method-label.email { background: #1e40af; }
+  .steps {
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .email-link {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    text-decoration: none;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+    margin-top: 8px;
+  }
+  .email-link:hover { background: var(--primary-hover); }
+  .retention-note {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-top: 16px;
+    font-size: 14px;
+    color: #fca5a5;
+  }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">Driend</div>
+    <div class="subtitle">Drive + Friend</div>
+  </header>
+
+  <section>
+    <h1>계정 삭제 안내</h1>
+    <p class="dev">앱: Driend · 개발자: TAEHYUN JEON</p>
+
+    <h2>계정 삭제 방법</h2>
+
+    <div class="method-label">방법 1 · 앱 내 회원 탈퇴</div>
+    <div class="steps">
+      <ol>
+        <li>Driend 앱을 실행합니다.</li>
+        <li>하단 탭에서 <strong>프로필</strong>을 선택합니다.</li>
+        <li>화면 하단의 <strong>회원 탈퇴</strong> 버튼을 탭합니다.</li>
+        <li>확인 대화상자에서 <strong>탈퇴</strong>를 선택합니다.</li>
+      </ol>
+      <p>탈퇴 확인 즉시 모든 데이터가 서버에서 영구적으로 삭제됩니다.</p>
+    </div>
+
+    <div class="method-label email">방법 2 · 이메일 요청</div>
+    <div class="steps">
+      <p>아래 주소로 "계정 삭제" 제목의 이메일을 발송해 주세요. 가입 시 사용한 계정 정보(이메일 또는 닉네임)를 본문에 포함해 주시면 영업일 기준 2일 이내에 처리됩니다.</p>
+      <a class="email-link" href="mailto:jeontaehyun0203@gmail.com?subject=[Driend] 계정 삭제 요청">jeontaehyun0203@gmail.com</a>
+    </div>
+
+    <h2>삭제되는 데이터</h2>
+    <ul>
+      <li>계정 정보 (이메일, 닉네임, 가입일시)</li>
+      <li>프로필 사진</li>
+      <li>모든 주행 기록 (경로 좌표, 거리, 속도, 시간, 시작/도착지 주소)</li>
+      <li>방문 도시 기록</li>
+      <li>사용자가 등록한 지역 사진</li>
+      <li>차량 정보 (제조사, 모델, 연식, 색상)</li>
+      <li>친구 관계 (친구 요청 및 수락 내역)</li>
+      <li>제로백(0→100) 측정 기록</li>
+      <li>통계 집계 데이터 (월별 주행량 등)</li>
+    </ul>
+
+    <h2>데이터 보관 기간</h2>
+    <p>계정 삭제 요청 즉시 모든 데이터가 영구적으로 삭제되며, 어떠한 데이터도 보관되지 않습니다. 삭제 후에는 복구가 불가능합니다.</p>
+
+    <div class="retention-note">
+      본 안내는 Google Play 정책 및 Apple App Store 정책에 따른 사용자 데이터 삭제 절차입니다.
+    </div>
+  </section>
+
+  <footer>
+    Driend · <a href="privacy-policy.html">개인정보처리방침</a> · © 2026 TAEHYUN JEON
+  </footer>
+</div>
+</body>
+</html>
