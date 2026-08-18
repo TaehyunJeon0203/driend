@@ -13,6 +13,31 @@
 - **랭킹 & 친구** — 누적 거리 / 최고속도 / 제로백 / 방문 도시 등 카테고리별 전체·친구 랭킹, 닉네임 검색 기반 친구 요청/수락
 - **카카오 로그인** (게스트 로그인도 지원)
 
+## 스크린샷
+
+<table>
+  <tr>
+    <td align="center">메인 지도 (도로 모드)</td>
+    <td align="center">지도 (사진 모드)</td>
+    <td align="center">랭킹</td>
+  </tr>
+  <tr>
+    <td><img src="./assets/screenshot/IMG_5488.PNG" width="280" alt="메인 지도 - 도로 모드"></td>
+    <td><img src="./assets/screenshot/IMG_5489.PNG" width="280" alt="지도 - 사진 모드"></td>
+    <td><img src="./assets/screenshot/IMG_5490.PNG" width="280" alt="랭킹"></td>
+  </tr>
+  <tr>
+    <td align="center">통계</td>
+    <td align="center">프로필</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td><img src="./assets/screenshot/IMG_5492.PNG" width="280" alt="통계"></td>
+    <td><img src="./assets/screenshot/IMG_5493.PNG" width="280" alt="프로필"></td>
+    <td></td>
+  </tr>
+</table>
+
 ## 기술 스택
 
 | 영역 | 사용 기술 |
@@ -45,41 +70,9 @@ ios/, android/            # 네이티브 프로젝트 (checked-in)
 
 ## 시작하기
 
-### 1. 의존성 설치
+App Store에서 다운로드할 수 있다.
 
-```bash
-npm install
-```
-
-### 2. 환경 변수
-
-`.env.example`을 참고해 `.env` 파일을 만들고 값을 채운다.
-
-```
-EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
-EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=
-EXPO_PUBLIC_NAVER_MAP_CLIENT_ID=
-EXPO_PUBLIC_KAKAO_NATIVE_KEY=
-KAKAO_REST_API_KEY=
-```
-
-### 3. 실기기 빌드 (iOS)
-
-이 프로젝트는 `expo start` / Expo Go가 아니라 **Xcode 직접 빌드 + devicectl 설치**로 실기기 테스트한다 (`ios/` 폴더가 checked-in되어 있음).
-
-```bash
-# 빌드
-EXPO_USE_PRECOMPILED_MODULES=false REACT_NATIVE_PRODUCTION=1 xcodebuild \
-  -workspace ios/Driend.xcworkspace -scheme Driend -configuration Release \
-  -destination "platform=iOS,id=<DEVICE_UDID>" -allowProvisioningUpdates
-
-# 설치
-xcrun devicectl device install app --device <DEVICE_UDID> \
-  "<DerivedData 경로>/Build/Products/Release-iphoneos/Driend.app"
-```
-
-자세한 개발 규칙(네이티브 의존성 추가, prebuild 시 주의사항 등)은 [`AGENTS.md`](./AGENTS.md) 참고.
+[![App Store](https://img.shields.io/badge/App_Store-Driend-000000?logo=appstore&logoColor=white)](https://apps.apple.com/kr/app/driend/id6794620035)
 
 ## 데이터베이스
 
