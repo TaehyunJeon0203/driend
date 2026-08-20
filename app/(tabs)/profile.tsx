@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image,
-  StyleSheet, Alert, ActivityIndicator, Platform, Switch,
+  StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Switch,
+  useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -14,11 +16,20 @@ import {
 import { uploadAvatar } from '../../src/services/avatar';
 import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
+import {
+  isCompactWindow,
+  preserveLegacyInset,
+  TAB_CONTENT_MAX_WIDTH,
+} from '../../src/utils/responsiveLayout';
 
 type Profile = { id: string; username: string; tag: string; avatar_url: string | null; best_zero_to_hundred_s: number | null };
 type Vehicle = { id: string; make: string | null; name: string; bt_device_name: string | null };
 
 export default function ProfileScreen() {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const compactWindow = isCompactWindow(width);
+  const contentTopPadding = preserveLegacyInset(56, insets.top, spacing.md);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [vehicleMake, setVehicleMake] = useState('');
@@ -289,8 +300,17 @@ export default function ProfileScreen() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
-    <ScrollView style={s.container} contentContainerStyle={s.content}>
+    <View style={s.root}>
+    <KeyboardAvoidingView
+      style={s.keyboardAvoidingView}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={[s.content, { paddingTop: contentTopPadding }]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+    >
       <Text style={s.screenTitle}>프로필</Text>
 
       {/* 사용자 정보 */}
@@ -309,9 +329,9 @@ export default function ProfileScreen() {
         </TouchableOpacity>
         {editingNickname ? (
           <View style={s.nicknameEditGroup}>
-            <View style={s.nicknameTagRow}>
+            <View style={[s.nicknameTagRow, compactWindow && s.nicknameTagColumn]}>
               <TextInput
-                style={[s.nicknameInput, s.nicknameInputFlex]}
+                style={[s.nicknameInput, s.nicknameInputFlex, compactWindow && s.nicknameInputCompact]}
                 value={nicknameInput}
                 onChangeText={setNicknameInput}
                 placeholder="닉네임"
@@ -321,7 +341,7 @@ export default function ProfileScreen() {
                 returnKeyType="next"
               />
               <TextInput
-                style={[s.nicknameInput, s.tagInput]}
+                style={[s.nicknameInput, s.tagInput, compactWindow && s.nicknameInputCompact]}
                 value={tagInput}
                 onChangeText={setTagInput}
                 placeholder="태그"
@@ -501,6 +521,7 @@ export default function ProfileScreen() {
           : <Text style={s.deleteText}>회원 탈퇴</Text>}
       </TouchableOpacity>
     </ScrollView>
+    </KeyboardAvoidingView>
 
     <OnboardingTip
       storageKey="profile_onboarding_seen"
@@ -511,14 +532,19 @@ export default function ProfileScreen() {
 }
 
 const s = StyleSheet.create({
+  root: { flex: 1 },
+  keyboardAvoidingView: { flex: 1 },
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.md, paddingTop: 56, gap: spacing.sm, paddingBottom: spacing.xl },
+  content: {
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center',
+    padding: spacing.md, gap: spacing.sm, paddingBottom: spacing.xl,
+  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
   screenTitle: { ...typography.title, marginBottom: spacing.sm },
 
   card: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardHeader: { minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardTitle: { ...typography.heading },
   editBtn: { fontSize: 14, fontWeight: '600', color: colors.primary },
 
@@ -549,19 +575,21 @@ const s = StyleSheet.create({
 
   nicknameEditGroup: { gap: spacing.xs },
   nicknameTagRow: { flexDirection: 'row', gap: spacing.xs },
+  nicknameTagColumn: { flexDirection: 'column' },
   nicknameInput: {
     height: 44, borderRadius: radius.sm,
     backgroundColor: colors.background, paddingHorizontal: spacing.sm,
     fontSize: 16, color: colors.text, textAlign: 'center',
   },
   nicknameInputFlex: { flex: 1 },
+  nicknameInputCompact: { flex: 0, width: '100%' },
   tagInput: { width: 90 },
   usernameTag: { color: colors.textTertiary, fontWeight: '400' },
   nicknameEditActions: { flexDirection: 'row', justifyContent: 'center', gap: spacing.md },
   nicknameCancel: { fontSize: 14, color: colors.textSecondary },
   nicknameSave: { fontSize: 14, fontWeight: '600', color: colors.primary },
 
-  vehicleInfo: { gap: 4 },
+  vehicleInfo: { minWidth: 0, gap: 4 },
   vehicleName: { fontSize: 17, fontWeight: '600', color: colors.text },
   btDeviceName: { fontSize: 13, color: colors.textTertiary },
   empty: { ...typography.label, paddingVertical: spacing.xs },

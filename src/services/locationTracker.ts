@@ -17,6 +17,7 @@ const MONITOR_TASK = 'driend-monitor-task';
 const FLUSH_THRESHOLD = 10;
 
 export type Coordinate = { longitude: number; latitude: number };
+type TrackedPoint = Coordinate & { speedKmh: number; recordedAt: string };
 
 export const DRIVE_IDLE_CATEGORY = 'DRIVE_IDLE';
 export const DRIVE_DETECT_CATEGORY = 'DRIVE_DETECT';
@@ -30,7 +31,7 @@ const DETECT_SPEED_MPS = 13 / 3.6;       // 주행 감지 기준 속도
 
 // 주행 상태
 let driveId: string | null = null;
-const buffer: Coordinate[] = [];
+const buffer: TrackedPoint[] = [];
 const driveCoords: Coordinate[] = [];
 let flushPromise: Promise<void> | null = null;
 
@@ -58,14 +59,14 @@ export function setActiveTripId(id: string | null): void {
 }
 
 const pointListeners = new Set<(coord: Coordinate, distanceKm: number) => void>();
-const stopListeners = new Set<() => void>();
+const stopListeners = new Set<(stoppedDriveId: string) => void>();
 
 export function addPointListener(cb: (coord: Coordinate, distanceKm: number) => void): () => void {
   pointListeners.add(cb);
   return () => pointListeners.delete(cb);
 }
 
-export function addStopListener(cb: () => void): () => void {
+export function addStopListener(cb: (stoppedDriveId: string) => void): () => void {
   stopListeners.add(cb);
   return () => stopListeners.delete(cb);
 }
@@ -123,11 +124,15 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     prevCoord = coord;
     if (coordCount % 30 === 0) midCoord = coord;
 
-    buffer.push(coord);
+    const speed = loc.coords.speed ?? -1;
+    buffer.push({
+      ...coord,
+      speedKmh: Math.max(0, speed) * 3.6,
+      recordedAt: new Date(loc.timestamp).toISOString(),
+    });
     driveCoords.push(coord);
     pointListeners.forEach((cb) => cb(coord, runningDistanceKm));
 
-    const speed = loc.coords.speed ?? -1;
     if (speed > maxSpeedMs) maxSpeedMs = speed;
 
     if (speed >= 0) {
@@ -369,7 +374,7 @@ async function performStopTracking(stoppingDriveId: string | null): Promise<stri
   if (driveId === stoppingDriveId) {
     driveId = null;
     resetDriveState();
-    stopListeners.forEach((cb) => cb());
+    stopListeners.forEach((cb) => cb(stoppingDriveId));
     await startMonitoring();
   }
 
@@ -393,7 +398,8 @@ async function flushBuffer(expectedDriveId: string | null = driveId): Promise<vo
       const rows = points.map((p) => ({
         drive_id: expectedDriveId,
         location: `POINT(${p.longitude} ${p.latitude})`,
-        recorded_at: new Date().toISOString(),
+        speed_kmh: p.speedKmh,
+        recorded_at: p.recordedAt,
       }));
       const { error } = await supabase.from('route_points').insert(rows);
       if (error) {

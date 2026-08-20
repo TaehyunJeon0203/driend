@@ -2,7 +2,7 @@
   "expo": {
     "name": "Driend",
     "slug": "driend",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "scheme": "driend",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.driend.app",
-      "buildNumber": "3",
+      "buildNumber": "1",
       "usesAppleSignIn": true,
       "appleTeamId": "US425RN9N9",
       "entitlements": {
@@ -101,7 +101,15 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": false,
+          "savePhotosPermission": "주행 결과 이미지를 사진 앱에 저장하기 위해 사진 추가 권한이 필요합니다.",
+          "granularPermissions": ["photo"]
+        }
+      ]
     ]
   }
 }

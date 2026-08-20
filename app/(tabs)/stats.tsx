@@ -2,15 +2,22 @@ import { useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Modal, TextInput,
   RefreshControl, ActivityIndicator, TouchableOpacity, Image, Alert,
+  KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../src/services/supabase';
 import { setActiveTripId } from '../../src/services/locationTracker';
 import { clipAndUploadCityPhoto } from '../../src/services/cityPhotoClipper';
 import CityPhotoCropper from '../../src/components/CityPhotoCropper';
 import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
+import {
+  isCompactWindow,
+  preserveLegacyInset,
+  TAB_CONTENT_MAX_WIDTH,
+} from '../../src/utils/responsiveLayout';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type Stats = { total_distance_km: number; total_drives: number; visited_cities_count: number; max_speed_kmh: number };
@@ -26,7 +33,10 @@ const BAR_MAX_H = 72;
 
 function formatKm(km: number | null) {
   if (!km) return '0.0';
-  return km >= 1000 ? `${(km / 1000).toFixed(1)}천` : km.toFixed(1);
+  return km.toLocaleString('en-US', {
+    minimumFractionDigits: km < 1000 ? 1 : 0,
+    maximumFractionDigits: 1,
+  });
 }
 
 function formatDuration(start: string, end: string | null) {
@@ -60,6 +70,9 @@ function fillMonths(data: MonthlyData[], n: number): MonthlyData[] {
 }
 
 export default function StatsScreen() {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isCompact = isCompactWindow(width);
   const [stats, setStats] = useState<Stats | null>(null);
   const [bestZeroHundred, setBestZeroHundred] = useState<number | null>(null);
   const [monthly, setMonthly] = useState<MonthlyData[]>([]);
@@ -87,7 +100,8 @@ export default function StatsScreen() {
       const [statsRes, monthlyRes, drivesRes, citiesRes, tripsRes, profileRes] = await Promise.all([
         supabase.rpc('get_my_stats', { p_user_id: user.id }),
         supabase.rpc('get_monthly_distances', { p_user_id: user.id }),
-        supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: 10 }),
+        // p_limit=null은 서버에서 제한 없이 전체 완료 주행을 반환합니다.
+        supabase.rpc('get_recent_drives', { p_user_id: user.id, p_limit: null }),
         supabase.from('visited_cities')
           .select('id, city_code, city_name, photo_url')
           .eq('user_id', user.id)
@@ -306,11 +320,19 @@ export default function StatsScreen() {
 
   return (
     <View style={s.container}>
-    <ScrollView
+    <KeyboardAvoidingView
       style={s.flex}
-      contentContainerStyle={s.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <ScrollView
+        style={s.flex}
+        contentContainerStyle={[
+          s.content,
+          { paddingTop: preserveLegacyInset(56, insets.top, spacing.md) },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      >
       <Text style={s.screenTitle}>통계</Text>
 
       {/* 누적 거리 히어로 */}
@@ -323,21 +345,21 @@ export default function StatsScreen() {
       </View>
 
       {/* 요약 카드 */}
-      <View style={s.row}>
-        <View style={s.statCard}>
+      <View style={[s.row, isCompact && s.summaryCompact]}>
+        <View style={[s.statCard, isCompact && s.statCardCompact]}>
           <Text style={s.statNum}>{stats?.total_drives ?? 0}</Text>
           <Text style={s.statLabel}>총 주행</Text>
         </View>
-        <View style={s.statCard}>
+        <View style={[s.statCard, isCompact && s.statCardCompact]}>
           <Text style={s.statNum}>{stats?.visited_cities_count ?? 0}</Text>
           <Text style={s.statLabel}>방문 도시</Text>
         </View>
-        <View style={s.statCard}>
+        <View style={[s.statCard, isCompact && s.statCardCompact]}>
           <Text style={s.statNum}>{Math.round(stats?.max_speed_kmh ?? 0)}</Text>
           <Text style={s.statLabel}>최고 속도 km/h</Text>
         </View>
         {bestZeroHundred && (
-          <View style={s.statCard}>
+          <View style={[s.statCard, isCompact && s.statCardCompact]}>
             <Text style={s.statNum}>{bestZeroHundred.toFixed(1)}</Text>
             <Text style={s.statLabel}>제로백 s</Text>
           </View>
@@ -351,7 +373,7 @@ export default function StatsScreen() {
           <View style={s.activeTripCard}>
             <View style={s.activeTripHeader}>
               <View style={s.activeTripDot} />
-              <Text style={s.activeTripName}>{activeTrip.name}</Text>
+              <Text style={s.activeTripName} numberOfLines={1}>{activeTrip.name}</Text>
             </View>
             <Text style={s.activeTripStats}>
               {formatKm(activeTrip.total_distance_km)} km · {activeTrip.total_drives}회 주행
@@ -399,7 +421,7 @@ export default function StatsScreen() {
               <View key={trip.id} style={[s.tripRow, i === 0 && { borderTopWidth: 0 }]}>
                 <TouchableOpacity style={s.tripRowMain} onPress={() => setSelectedTrip(trip)}>
                   <View style={s.tripRowInfo}>
-                    <Text style={s.tripRowName}>{trip.name}</Text>
+                    <Text style={s.tripRowName} numberOfLines={1}>{trip.name}</Text>
                     <Text style={s.tripRowDate}>
                       {formatDate(trip.started_at)}{trip.ended_at ? ` - ${formatDate(trip.ended_at)}` : ''}
                     </Text>
@@ -465,30 +487,39 @@ export default function StatsScreen() {
 
       {/* 최근 주행 */}
       <View style={[s.card, { marginBottom: spacing.xl }]}>
-        <Text style={s.cardTitle}>최근 주행</Text>
+        <Text style={s.cardTitle}>전체 주행 기록</Text>
         {drives.length === 0 ? (
           <Text style={s.empty}>완료된 주행이 없어요</Text>
         ) : (
           drives.map((d, i) => (
             <View key={d.id} style={[s.driveRow, i === 0 && { borderTopWidth: 0 }]}>
-              <View style={s.driveMain}>
+              <TouchableOpacity
+                style={s.driveMain}
+                onPress={() => router.push({ pathname: '/drive-result/[id]', params: { id: d.id } })}
+                accessibilityRole="button"
+                accessibilityLabel="주행 결과 보기"
+              >
                 {(d.start_address || d.end_address) ? (
                   <Text style={s.driveRoute} numberOfLines={1}>
                     {d.start_address ?? '?'} → {d.end_address ?? '?'}
                   </Text>
                 ) : null}
-                <View style={s.driveInfo}>
+                <View style={[s.driveInfo, isCompact && s.driveInfoCompact]}>
                   <Text style={s.driveDate}>{formatDate(d.started_at)}</Text>
                   <Text style={s.driveDur}>{formatDuration(d.started_at, d.ended_at)}</Text>
                   <Text style={s.driveKm}>{formatKm(d.distance_km)} km</Text>
                   {d.max_speed_kmh ? (
                     <Text style={s.driveSpeed}>{Math.round(d.max_speed_kmh)}km/h</Text>
                   ) : null}
-                  {d.zero_to_hundred_s ? (
-                    <Text style={s.driveZeroHundred}>0→100 {d.zero_to_hundred_s}s</Text>
-                  ) : null}
+                 {d.zero_to_hundred_s ? (
+                   <Text style={s.driveZeroHundred}>0→100 {d.zero_to_hundred_s}s</Text>
+                 ) : null}
+               </View>
+                <View style={s.driveOpenHint}>
+                  <Text style={s.driveOpenHintText}>주행 인증 카드</Text>
+                  <Text style={s.driveOpenHintArrow}>›</Text>
                 </View>
-              </View>
+             </TouchableOpacity>
               <TouchableOpacity onPress={() => confirmDelete(d)} hitSlop={8}>
                 <Text style={s.driveDelete}>✕</Text>
               </TouchableOpacity>
@@ -496,7 +527,8 @@ export default function StatsScreen() {
           ))
         )}
       </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
 
     {/* 되돌리기 배너 */}
     {pendingDelete && (
@@ -511,8 +543,8 @@ export default function StatsScreen() {
     {/* 여행 상세 모달 */}
     <Modal visible={!!selectedTrip} animationType="slide" transparent onRequestClose={() => setSelectedTrip(null)}>
       <View style={s.modalOverlay}>
-        <View style={s.modalCard}>
-          <Text style={s.modalTitle}>{selectedTrip?.name}</Text>
+        <View style={[s.modalCard, { paddingBottom: spacing.lg + insets.bottom }]}>
+          <Text style={s.modalTitle} numberOfLines={2}>{selectedTrip?.name}</Text>
           <Text style={s.modalDate}>
             {selectedTrip ? formatDate(selectedTrip.started_at) : ''}
             {selectedTrip?.ended_at ? ` - ${formatDate(selectedTrip.ended_at)}` : ''}
@@ -558,7 +590,10 @@ export default function StatsScreen() {
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  content: { padding: spacing.md, paddingTop: 56, gap: spacing.sm },
+  content: {
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center',
+    padding: spacing.md, paddingTop: 56, gap: spacing.sm,
+  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
   screenTitle: { ...typography.title, marginBottom: spacing.sm },
@@ -570,7 +605,12 @@ const s = StyleSheet.create({
   heroUnit: { fontSize: 18, color: 'rgba(255,255,255,0.75)', marginBottom: 6 },
 
   row: { flexDirection: 'row', gap: spacing.sm },
-  statCard: { flex: 1, backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: 4 },
+  summaryCompact: { flexWrap: 'wrap' },
+  statCard: {
+    flex: 1, minWidth: 0,
+    backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: 4,
+  },
+  statCardCompact: { flexBasis: '47%' },
   statNum: { fontSize: 28, fontWeight: '700', color: colors.text },
   statLabel: { ...typography.label },
 
@@ -602,14 +642,18 @@ const s = StyleSheet.create({
     paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.divider,
   },
   driveDate: { width: 44, ...typography.label },
-  driveDur: { flex: 1, ...typography.body, color: colors.textSecondary },
-  driveKm: { fontSize: 15, fontWeight: '600', color: colors.primary },
-  driveSpeed: { fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
-  driveZeroHundred: { fontSize: 12, color: colors.primary, fontWeight: '600' },
+  driveDur: { flex: 1, minWidth: 0, ...typography.body, color: colors.textSecondary },
+  driveKm: { flexShrink: 0, fontSize: 15, fontWeight: '600', color: colors.primary },
+  driveSpeed: { flexShrink: 0, fontSize: 12, color: colors.textTertiary, width: 52, textAlign: 'right' },
+  driveZeroHundred: { flexShrink: 0, fontSize: 12, color: colors.primary, fontWeight: '600' },
   driveDelete: { fontSize: 14, color: colors.textTertiary, paddingLeft: 8 },
-  driveMain: { flex: 1, gap: 2 },
-  driveRoute: { fontSize: 13, fontWeight: '600', color: colors.text },
+  driveMain: { flex: 1, flexShrink: 1, minWidth: 0, gap: 2 },
+  driveRoute: { flexShrink: 1, minWidth: 0, fontSize: 13, fontWeight: '600', color: colors.text },
   driveInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  driveInfoCompact: { flexWrap: 'wrap', rowGap: spacing.xs },
+  driveOpenHint: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 3, marginTop: 5 },
+  driveOpenHintText: { fontSize: 11, fontWeight: '700', color: colors.primary },
+  driveOpenHintArrow: { fontSize: 17, lineHeight: 14, color: colors.primary },
 
   undoBanner: {
     position: 'absolute', bottom: 80, left: spacing.md, right: spacing.md,
@@ -623,9 +667,9 @@ const s = StyleSheet.create({
   undoBtn: { fontSize: 14, fontWeight: '700', color: colors.primary },
 
   activeTripCard: { gap: spacing.sm },
-  activeTripHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  activeTripHeader: { flexDirection: 'row', alignItems: 'center', minWidth: 0, gap: 8 },
   activeTripDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
-  activeTripName: { fontSize: 16, fontWeight: '700', color: colors.text },
+  activeTripName: { flexShrink: 1, minWidth: 0, fontSize: 16, fontWeight: '700', color: colors.text },
   activeTripStats: { fontSize: 13, color: colors.textSecondary },
   endTripBtn: {
     backgroundColor: colors.danger, borderRadius: radius.sm,
@@ -654,18 +698,21 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
     borderTopWidth: 1, borderTopColor: colors.divider,
   },
-  tripRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  tripRowInfo: { flex: 1, gap: 2 },
-  tripRowName: { fontSize: 14, fontWeight: '600', color: colors.text },
+  tripRowMain: { flex: 1, flexShrink: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  tripRowInfo: { flex: 1, flexShrink: 1, minWidth: 0, gap: 2 },
+  tripRowName: { flexShrink: 1, minWidth: 0, fontSize: 14, fontWeight: '600', color: colors.text },
   tripRowDate: { fontSize: 12, color: colors.textTertiary },
-  tripRowKm: { fontSize: 14, fontWeight: '600', color: colors.primary },
+  tripRowKm: { flexShrink: 0, fontSize: 14, fontWeight: '600', color: colors.primary },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlay: {
+    flex: 1, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end',
+  },
   modalCard: {
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH,
     backgroundColor: colors.card, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
     padding: spacing.lg, gap: spacing.md,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
+  modalTitle: { flexShrink: 1, minWidth: 0, fontSize: 20, fontWeight: '700', color: colors.text },
   modalDate: { fontSize: 13, color: colors.textTertiary },
   modalStats: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',

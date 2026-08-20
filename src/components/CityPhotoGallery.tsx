@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Modal, View, StyleSheet, Image, TouchableOpacity, Text,
-  ActivityIndicator, FlatList, Dimensions, Alert,
+  ActivityIndicator, FlatList, Alert, useWindowDimensions,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   listCityPhotos, addCityPhotos, deleteCityPhotos,
   reorderCityPhotos, recropAndSetCover,
@@ -13,9 +14,13 @@ import {
 import { CityPhotoCropperContent } from './CityPhotoCropper';
 import CrashAlertBoundary from './CrashAlertBoundary';
 import { colors } from '../theme';
+import {
+  pageIndexFromOffset,
+  preserveLegacyInset,
+  TAB_CONTENT_MAX_WIDTH,
+} from '../utils/responsiveLayout';
 import CITY_DATA from '../../assets/korea-cities.json';
 
-const SCREEN_W = Dimensions.get('window').width;
 type LatLng = { latitude: number; longitude: number };
 type CityGeo = { code: string; polygons: LatLng[][] };
 const CITIES = CITY_DATA as CityGeo[];
@@ -41,6 +46,8 @@ export default function CityPhotoGallery({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [photos, setPhotos] = useState<CityPhoto[]>([]);
   const [loading, setLoading] = useState(false);
   const [index, setIndex] = useState(0);
@@ -52,6 +59,8 @@ export default function CityPhotoGallery({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const autoAddTriggeredRef = useRef(false);
+  const galleryRef = useRef<FlatList<CityPhoto>>(null);
+  const previousWidthRef = useRef(width);
 
   useEffect(() => {
     if (!visible || !visitedId) {
@@ -83,6 +92,21 @@ export default function CityPhotoGallery({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, autoAdd]);
+
+  useEffect(() => {
+    setIndex((currentIndex) => Math.min(currentIndex, Math.max(0, photos.length - 1)));
+  }, [photos.length]);
+
+  useEffect(() => {
+    if (!visible || editMode || cropQueue || recropTarget || photos.length === 0) return;
+    if (previousWidthRef.current === width) return;
+    previousWidthRef.current = width;
+    const alignedIndex = Math.min(index, Math.max(0, photos.length - 1));
+    const animationFrame = requestAnimationFrame(() => {
+      galleryRef.current?.scrollToOffset({ offset: alignedIndex * width, animated: false });
+    });
+    return () => cancelAnimationFrame(animationFrame);
+  }, [cropQueue, editMode, photos.length, recropTarget, visible, width]);
 
   if (!visible) return null;
 
@@ -262,7 +286,16 @@ export default function CityPhotoGallery({
     <CrashAlertBoundary>
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={s.overlay}>
-        <View style={s.header}>
+        <View
+          style={[
+            s.header,
+            {
+              paddingTop: preserveLegacyInset(60, insets.top, 20),
+              paddingLeft: insets.left + 20,
+              paddingRight: insets.right + 20,
+            },
+          ]}
+        >
           <View style={s.titleRow}>
             <Text style={s.title}>{cityName}</Text>
             {!editMode && current?.is_cover && <Text style={s.coverLabel}>대표사진</Text>}
@@ -275,7 +308,12 @@ export default function CityPhotoGallery({
         </View>
 
         {editMode && photos.length > 0 && (
-          <View style={s.selectRow}>
+          <View
+            style={[
+              s.selectRow,
+              { paddingLeft: insets.left + 20, paddingRight: insets.right + 20 },
+            ]}
+          >
             <TouchableOpacity
               onPress={() => {
                 if (selectMode) { setSelectMode(false); setSelectedIds(new Set()); }
@@ -302,15 +340,25 @@ export default function CityPhotoGallery({
         ) : !editMode ? (
           <>
             <FlatList
+              ref={galleryRef}
               data={photos}
               keyExtractor={(p) => p.id}
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / SCREEN_W))}
+              getItemLayout={(_, itemIndex) => ({
+                length: width,
+                offset: width * itemIndex,
+                index: itemIndex,
+              })}
+              onMomentumScrollEnd={(event) => setIndex(pageIndexFromOffset(
+                event.nativeEvent.contentOffset.x,
+                width,
+                photos.length,
+              ))}
               renderItem={({ item }) => (
-                <View style={{ width: SCREEN_W, alignItems: 'center', justifyContent: 'center' }}>
-                  <Image source={{ uri: item.url }} style={s.photo} resizeMode="contain" />
+                <View style={[s.photoPage, { width }]}>
+                  <Image source={{ uri: item.url }} style={[s.photo, { width }]} resizeMode="contain" />
                 </View>
               )}
             />
@@ -323,7 +371,10 @@ export default function CityPhotoGallery({
             data={photos}
             keyExtractor={(p) => p.id}
             containerStyle={{ flex: 1 }}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8 }}
+            contentContainerStyle={[
+              s.editContent,
+              { paddingLeft: insets.left + 20, paddingRight: insets.right + 20 },
+            ]}
             onDragEnd={({ data }) => handleDragEnd(data)}
             renderItem={({ item, drag, isActive, getIndex }: RenderItemParams<CityPhoto>) => {
               const pos = getIndex() ?? 0;
@@ -357,7 +408,16 @@ export default function CityPhotoGallery({
           />
         )}
 
-        <View style={s.actionRow}>
+        <View
+          style={[
+            s.actionRow,
+            {
+              paddingLeft: insets.left + 20,
+              paddingRight: insets.right + 20,
+              paddingBottom: preserveLegacyInset(40, insets.bottom, 20),
+            },
+          ]}
+        >
           {!selectMode ? (
             <>
               <TouchableOpacity style={s.actionBtn} onPress={handleAdd} disabled={busy}>
@@ -407,16 +467,20 @@ const s = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' },
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingTop: 60, paddingHorizontal: 20, paddingBottom: 12,
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center', paddingBottom: 12,
   },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
   title: { color: '#fff', fontSize: 18, fontWeight: '700' },
   headerRight: { alignItems: 'flex-end', gap: 10 },
   closeText: { color: 'rgba(255,255,255,0.7)', fontSize: 15 },
-  selectRow: { alignItems: 'flex-end', paddingHorizontal: 20, marginTop: 20, marginBottom: 8 },
+  selectRow: {
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center',
+    alignItems: 'flex-end', marginTop: 20, marginBottom: 8,
+  },
   selectText: { color: 'rgba(255,255,255,0.7)', fontSize: 14 },
   selectToggleX: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  photo: { width: SCREEN_W, height: '100%' },
+  photoPage: { alignItems: 'center', justifyContent: 'center' },
+  photo: { height: '100%' },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: 'rgba(255,255,255,0.5)', fontSize: 15 },
   pageIndicator: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', marginTop: 8 },
@@ -431,6 +495,9 @@ const s = StyleSheet.create({
     padding: 8, marginBottom: 10,
   },
   editRowActive: { backgroundColor: 'rgba(255,255,255,0.16)' },
+  editContent: {
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center', paddingTop: 8,
+  },
   editPosition: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '700', width: 20, textAlign: 'center' },
   editThumb: { width: 56, height: 56, borderRadius: 8, backgroundColor: '#222' },
   editCoverBadge: {
@@ -447,7 +514,7 @@ const s = StyleSheet.create({
   dragBar: { width: 20, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.6)' },
   actionRow: {
     flexDirection: 'row', justifyContent: 'center', gap: 12,
-    paddingVertical: 20, paddingHorizontal: 20, paddingBottom: 40,
+    width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center', paddingTop: 20,
   },
   actionBtn: {
     paddingHorizontal: 18, paddingVertical: 12, borderRadius: 20,

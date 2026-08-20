@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
 import Svg, { Path } from 'react-native-svg';
@@ -26,6 +26,10 @@ import { consumePendingWidgetStartDrive, consumePendingWidgetStopDrive } from '.
 import { buildCityIndex, bboxIntersects, matchCity, matchVisitedCities, padBBox, type BBox } from '../../src/services/geo';
 import { addCityPhotos } from '../../src/services/cityPhotos';
 import { calculateZeroToHundredSeconds, type SpeedSample } from '../../src/services/zeroToHundred';
+import {
+  fetchDriveResult, formatDriveDuration, getAverageSpeedKmh, getDurationSeconds,
+  type DriveResult,
+} from '../../src/services/driveResult';
 import CityPhotoGallery from '../../src/components/CityPhotoGallery';
 import { colors } from '../../src/theme';
 import CITY_DATA from '../../assets/korea-cities.json';
@@ -133,6 +137,8 @@ export default function MapScreen() {
   const [followingMe, setFollowingMe] = useState(false);
   const [driveDistanceKm, setDriveDistanceKm] = useState(0);
   const [driveElapsedSec, setDriveElapsedSec] = useState(0);
+  const [completedDriveId, setCompletedDriveId] = useState<string | null>(null);
+  const [completedDrive, setCompletedDrive] = useState<DriveResult | null>(null);
   const driveStartRef = useRef<number | null>(null);
   const driveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -239,7 +245,7 @@ export default function MapScreen() {
       }
     });
 
-    const removeStop = addStopListener(() => {
+    const removeStop = addStopListener((stoppedDriveId) => {
       setTracking(false);
       setRouteCoords([]);
       routeCoordsBufferRef.current = [];
@@ -251,6 +257,11 @@ export default function MapScreen() {
       loadPastRoutes();
       loadVisitedCities();
       loadTotalDistance();
+      setCompletedDriveId(stoppedDriveId);
+      setCompletedDrive(null);
+      fetchDriveResult(stoppedDriveId).then(setCompletedDrive, (error: unknown) => {
+        console.error('[DriveResult] summary load failed:', error);
+      });
     });
 
     let locationSub: Location.LocationSubscription | null = null;
@@ -873,6 +884,39 @@ export default function MapScreen() {
         onChanged={loadVisitedCities}
       />
 
+      <Modal visible={!!completedDriveId} animationType="slide" transparent onRequestClose={() => setCompletedDriveId(null)}>
+        <View style={s.completionOverlay}>
+          <View style={s.completionSheet}>
+            <View style={s.completionHandle} />
+            <Text style={s.completionTitle}>주행을 마쳤어요</Text>
+            {completedDrive ? (
+              <>
+                <View style={s.completionStats}>
+                  <View style={s.completionStat}><Text style={s.completionValue}>{completedDrive.distanceKm.toFixed(1)}</Text><Text style={s.completionLabel}>거리 km</Text></View>
+                  <View style={s.completionStat}><Text style={s.completionValue}>{Math.round(completedDrive.maxSpeedKmh)}</Text><Text style={s.completionLabel}>최고 km/h</Text></View>
+                  <View style={s.completionStat}><Text style={s.completionValue}>{Math.round(getAverageSpeedKmh(completedDrive))}</Text><Text style={s.completionLabel}>평균 km/h</Text></View>
+                </View>
+                <Text style={s.completionDuration}>{formatDriveDuration(getDurationSeconds(completedDrive))} 동안 주행했어요</Text>
+              </>
+            ) : <ActivityIndicator style={{ marginVertical: 24 }} color={colors.primary} />}
+            <TouchableOpacity
+              style={[s.completionResultButton, !completedDrive && { opacity: 0.5 }]}
+              disabled={!completedDrive}
+              onPress={() => {
+                const resultId = completedDriveId;
+                setCompletedDriveId(null);
+                if (resultId) router.push({ pathname: '/drive-result/[id]', params: { id: resultId, editable: '1' } });
+              }}
+            >
+              <Text style={s.completionResultText}>주행 인증 카드</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.completionCloseButton} onPress={() => setCompletedDriveId(null)}>
+              <Text style={s.completionCloseText}>닫기</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* 제로백 측정 모달 */}
       <Modal visible={zhVisible} animationType="fade" transparent onRequestClose={closeZeroHundred}>
         <View style={s.zhOverlay}>
@@ -1126,6 +1170,23 @@ const s = StyleSheet.create({
   zhRetryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   zhCloseBtn: { marginTop: 12 },
   zhCloseText: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
+
+  completionOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  completionSheet: {
+    backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, paddingBottom: 32, gap: 12,
+  },
+  completionHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.textTertiary, alignSelf: 'center', marginBottom: 4 },
+  completionTitle: { fontSize: 22, fontWeight: '800', color: colors.text, textAlign: 'center' },
+  completionStats: { flexDirection: 'row', paddingVertical: 12 },
+  completionStat: { flex: 1, alignItems: 'center', gap: 3 },
+  completionValue: { fontSize: 28, fontWeight: '800', color: colors.text },
+  completionLabel: { fontSize: 11, color: colors.textSecondary },
+  completionDuration: { fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
+  completionResultButton: { height: 50, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  completionResultText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  completionCloseButton: { paddingVertical: 8, alignItems: 'center' },
+  completionCloseText: { fontSize: 14, color: colors.textSecondary },
 
   onboardOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   onboardBubble: {

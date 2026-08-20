@@ -74,6 +74,9 @@ PODS:
     - ExpoModulesCore
   - ExpoLogBox (56.0.13):
     - React-Core
+  - ExpoMediaLibrary (56.0.11):
+    - ExpoModulesCore
+    - React-Core
   - ExpoModulesCore (56.0.17):
     - ExpoModulesJSI
     - hermes-engine
@@ -118,6 +121,8 @@ PODS:
     - ExpoModulesCore
   - ExpoSensors (56.0.6):
     - ExpoModulesCore
+  - ExpoSharing (56.0.25):
+    - ExpoModulesCore
   - ExpoSplashScreen (56.0.12):
     - ExpoModulesCore
   - ExpoSymbols (56.0.6):
@@ -129,6 +134,8 @@ PODS:
     - ExpoModulesCore
     - ExpoModulesWorklets
     - React-RCTFabric
+  - ExtensionStorage (1.0.0):
+    - ExpoModulesCore
   - FBLazyVector (0.85.3)
   - hermes-engine (250829098.0.10):
     - hermes-engine/Pre-built (= 250829098.0.10)
@@ -2414,6 +2421,7 @@ DEPENDENCIES:
   - ExpoLinking (from `../node_modules/expo-linking/ios`)
   - ExpoLocation (from `../node_modules/expo-location/ios`)
   - "ExpoLogBox (from `../node_modules/@expo/log-box`)"
+  - ExpoMediaLibrary (from `../node_modules/expo-media-library/ios`)
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoModulesJSI (from `../node_modules/expo-modules-jsi/apple`)
   - ExpoModulesWorklets (from `../node_modules/expo-modules-core`)
@@ -2422,10 +2430,12 @@ DEPENDENCIES:
   - ExpoRouter (from `../node_modules/expo-router/ios`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
   - ExpoSensors (from `../node_modules/expo-sensors/ios`)
+  - ExpoSharing (from `../node_modules/expo-sharing/ios`)
   - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
   - ExpoSymbols (from `../node_modules/expo-symbols/ios`)
   - ExpoTaskManager (from `../node_modules/expo-task-manager/ios`)
   - "ExpoUI (from `../node_modules/expo-router/node_modules/@expo/ui/ios`)"
+  - "ExtensionStorage (from `../node_modules/@bacons/apple-targets/ios`)"
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
   - "mj-studio-react-native-naver-map (from `../node_modules/@mj-studio/react-native-naver-map`)"
@@ -2555,6 +2565,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-location/ios"
   ExpoLogBox:
     :path: "../node_modules/@expo/log-box"
+  ExpoMediaLibrary:
+    :path: "../node_modules/expo-media-library/ios"
   ExpoModulesCore:
     :path: "../node_modules/expo-modules-core"
   ExpoModulesJSI:
@@ -2571,6 +2583,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-secure-store/ios"
   ExpoSensors:
     :path: "../node_modules/expo-sensors/ios"
+  ExpoSharing:
+    :path: "../node_modules/expo-sharing/ios"
   ExpoSplashScreen:
     :path: "../node_modules/expo-splash-screen/ios"
   ExpoSymbols:
@@ -2579,6 +2593,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-task-manager/ios"
   ExpoUI:
     :path: "../node_modules/expo-router/node_modules/@expo/ui/ios"
+  ExtensionStorage:
+    :path: "../node_modules/@bacons/apple-targets/ios"
   FBLazyVector:
     :path: "../node_modules/react-native/Libraries/FBLazyVector"
   hermes-engine:
@@ -2772,6 +2788,7 @@ SPEC CHECKSUMS:
   ExpoLinking: f3d1883179d784e3d74c0eaf6ae8b03ec3571da3
   ExpoLocation: d47116c4daea734eea77648c36503a52b4ed63fc
   ExpoLogBox: 63977cf56b04547c713535d2d4e9bbf2f012e3c6
+  ExpoMediaLibrary: 2597e4d61e8d990bdb9013fe8dc44224f36bdb62
   ExpoModulesCore: 317a6b4d491a6f6cc645aadce807fdb4259439cc
   ExpoModulesJSI: abc606cf32f6eeb4e2ad44ec3fc4b24143abd8f6
   ExpoModulesWorklets: 25d712f4e0a4eb37397d46c0ff5b450eca897fd1
@@ -2780,10 +2797,12 @@ SPEC CHECKSUMS:
   ExpoRouter: 5539806fcab8d38c639c9c255a6d73caa839436a
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
   ExpoSensors: d34558ddf1f1d61c7a22180d1d40d8bd89d67d7b
+  ExpoSharing: b16b03e6e404fb749fade366156f37d2410d2412
   ExpoSplashScreen: db432721a17dc8a718d5e2562f8edebe310e524f
   ExpoSymbols: 377747de25bcb1ab68ec68f23d81fb81d43eae83
   ExpoTaskManager: bb9420854e7fb41d5753bcaae3428bd42d60d5bf
   ExpoUI: cb2928f5537135cff59e7b84b4adbeb72355f9fd
+  ExtensionStorage: b1b89518395d9d556e00a1b1f299172e49be3dbe
   FBLazyVector: 24e62c765683b8d89006a88a2c8f5cf019f0074d
   hermes-engine: b4f0c2c162d8a740eb8187edf5470199f31f7101
   KakaoSDKAuth: 569b377eda622d93d4575240b8031cd658163eef
@@ -2877,6 +2896,6 @@ SPEC CHECKSUMS:
   UMAppLoader: b7d22886a244871c20b5a8f2fcea13c18534e677
   Yoga: 77dfa8673de2874e1855002ae59c68b8be9b007b
 
-PODFILE CHECKSUM: 135191336230c1844453efa771cf4e4717c004ed
+PODFILE CHECKSUM: 173c88e0d1a8bee3a28aa25900cc5f90349cf98c
 
 COCOAPODS: 1.17.0

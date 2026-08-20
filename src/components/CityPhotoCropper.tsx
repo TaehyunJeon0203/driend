@@ -1,20 +1,26 @@
-import { useRef, useState } from 'react';
-import { Modal, View, StyleSheet, Image, TouchableOpacity, Text, Animated, Dimensions } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Modal, View, StyleSheet, Image, TouchableOpacity, Text, Animated,
+  type LayoutChangeEvent,
+} from 'react-native';
 import {
   PinchGestureHandler, PanGestureHandler, State,
   type PinchGestureHandlerEventPayload, type PanGestureHandlerEventPayload,
   type HandlerStateChangeEvent,
 } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 import { bboxOfPolygons } from '../services/geo';
 import { colors } from '../theme';
+import {
+  fitAspectFrame,
+  resizeTranslation,
+  TAB_CONTENT_MAX_WIDTH,
+  type FrameSize,
+} from '../utils/responsiveLayout';
 
 type LatLng = { latitude: number; longitude: number };
-
-const SCREEN_W = Dimensions.get('window').width;
-const FRAME_MAX_W = SCREEN_W * 0.86;
-const FRAME_MAX_H = FRAME_MAX_W * 1.3;
 
 /** 위경도 폴리곤을 프레임 픽셀 좌표계의 SVG path로 변환 (경도는 위도 보정) */
 function buildGuidePath(polygons: LatLng[][], bbox: { minLat: number; maxLat: number; minLng: number; maxLng: number }, w: number, h: number): string {
@@ -46,8 +52,10 @@ export function CityPhotoCropperContent({
   onCancel,
   onConfirm,
 }: CropperProps) {
-  const [frameSize, setFrameSize] = useState({ w: FRAME_MAX_W, h: FRAME_MAX_H });
+  const insets = useSafeAreaInsets();
+  const [frameRegion, setFrameRegion] = useState<FrameSize>({ width: 0, height: 0 });
   const viewShotRef = useRef<ViewShotRef>(null);
+  const previousFrameRef = useRef<FrameSize>({ width: 0, height: 0 });
 
   const baseScale = useRef(new Animated.Value(1)).current;
   const pinchScale = useRef(new Animated.Value(1)).current;
@@ -61,25 +69,43 @@ export function CityPhotoCropperContent({
   const translateX = Animated.add(baseTranslate.x, panTranslate.x);
   const translateY = Animated.add(baseTranslate.y, panTranslate.y);
 
-  if (!visible || !imageUri || !polygons.length) return null;
+  const geometry = visible && imageUri && polygons.length > 0
+    ? (() => {
+        const bbox = bboxOfPolygons(polygons);
+        const avgLatRad = ((bbox.minLat + bbox.maxLat) / 2) * (Math.PI / 180);
+        const geoW = (bbox.maxLng - bbox.minLng) * Math.cos(avgLatRad);
+        const geoH = bbox.maxLat - bbox.minLat;
+        return { bbox, aspect: geoW / geoH };
+      })()
+    : null;
+  const frame = fitAspectFrame({
+    aspect: geometry?.aspect ?? 0,
+    availableWidth: frameRegion.width,
+    availableHeight: frameRegion.height,
+  });
 
-  const { minLat, maxLat, minLng, maxLng } = bboxOfPolygons(polygons);
-  const avgLatRad = ((minLat + maxLat) / 2) * (Math.PI / 180);
-  const geoW = (maxLng - minLng) * Math.cos(avgLatRad);
-  const geoH = maxLat - minLat;
-  const aspect = geoW / geoH;
+  useEffect(() => {
+    if (frame.width <= 0 || frame.height <= 0) return;
 
-  let frameW = FRAME_MAX_W;
-  let frameH = frameW / aspect;
-  if (frameH > FRAME_MAX_H) {
-    frameH = FRAME_MAX_H;
-    frameW = frameH * aspect;
-  }
-  if (frameSize.w !== frameW || frameSize.h !== frameH) {
-    setFrameSize({ w: frameW, h: frameH });
-  }
+    const previousFrame = previousFrameRef.current;
+    if (
+      previousFrame.width > 0 && previousFrame.height > 0 &&
+      (previousFrame.width !== frame.width || previousFrame.height !== frame.height)
+    ) {
+      const translation = resizeTranslation(lastTranslate.current, previousFrame, frame);
+      lastTranslate.current = translation;
+      baseTranslate.setValue(translation);
+      panTranslate.setValue({ x: 0, y: 0 });
+    }
+    previousFrameRef.current = frame;
+  }, [baseTranslate, frame.height, frame.width, panTranslate]);
 
-  const guidePath = buildGuidePath(polygons, { minLat, maxLat, minLng, maxLng }, frameW, frameH);
+  if (!geometry || !imageUri) return null;
+
+  const frameW = frame.width;
+  const frameH = frame.height;
+
+  const guidePath = buildGuidePath(polygons, geometry.bbox, frameW, frameH);
   const outerPath = `M0,0 L${frameW},0 L${frameW},${frameH} L0,${frameH} Z`;
 
   const onPinchEvent = Animated.event([{ nativeEvent: { scale: pinchScale } }], { useNativeDriver: true });
@@ -113,10 +139,27 @@ export function CityPhotoCropperContent({
   };
 
   return (
-    <View style={s.overlay}>
-      <Text style={s.title}>사진을 원하는 위치로 옮기고 확대/축소하세요</Text>
+    <View
+      style={[
+        s.overlay,
+        { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
+      ]}
+    >
+      <View style={s.controlContent}>
+        <Text style={s.title}>사진을 원하는 위치로 옮기고 확대/축소하세요</Text>
+      </View>
 
-      <View style={[s.frameWrap, { width: frameW, height: frameH }]}>
+      <View
+        style={s.frameRegion}
+        onLayout={(event: LayoutChangeEvent) => {
+          const { width, height } = event.nativeEvent.layout;
+          setFrameRegion((current) => current.width === width && current.height === height
+            ? current
+            : { width, height });
+        }}
+      >
+      {frameW > 0 && frameH > 0 && (
+        <View style={[s.frameWrap, { width: frameW, height: frameH }]}>
         {/* PNG로 캡처하면 일부 기기(광색역 디스플레이)에서 16비트 PNG가 나와 서버(Jimp)가
             못 읽는 문제가 있었음. 이 단계는 투명도가 필요 없어(마스킹은 서버에서 함) JPEG로 캡처 */}
         <ViewShot ref={viewShotRef} style={{ width: frameW, height: frameH }} options={{ format: 'jpg', quality: 0.92 }}>
@@ -144,15 +187,19 @@ export function CityPhotoCropperContent({
           <Path d={`${outerPath} ${guidePath}`} fill="rgba(0,0,0,0.55)" fillRule="evenodd" />
           <Path d={guidePath} fill="none" stroke="#fff" strokeWidth={2} />
         </Svg>
+        </View>
+      )}
       </View>
 
-      <View style={s.btnRow}>
-        <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
-          <Text style={s.cancelText}>취소</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.confirmBtn} onPress={handleConfirm}>
-          <Text style={s.confirmText}>완료</Text>
-        </TouchableOpacity>
+      <View style={s.controlContent}>
+        <View style={s.btnRow}>
+          <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
+            <Text style={s.cancelText}>취소</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.confirmBtn} onPress={handleConfirm}>
+            <Text style={s.confirmText}>완료</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -169,8 +216,10 @@ export default function CityPhotoCropper(props: CropperProps) {
 }
 
 const s = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  title: { color: '#fff', fontSize: 14, marginBottom: 20, paddingHorizontal: 24, textAlign: 'center' },
+  overlay: { flex: 1, backgroundColor: '#000', alignItems: 'center' },
+  controlContent: { width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignItems: 'center' },
+  title: { color: '#fff', fontSize: 14, paddingHorizontal: 24, textAlign: 'center' },
+  frameRegion: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' },
   frameWrap: { overflow: 'hidden', backgroundColor: '#111', borderRadius: 8 },
   frame: { overflow: 'hidden' },
   image: { width: '100%', height: '100%' },

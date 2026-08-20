@@ -2,11 +2,14 @@ import { useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   RefreshControl, ActivityIndicator, Modal, TextInput, Alert,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../src/services/supabase';
 import OnboardingTip from '../../src/components/OnboardingTip';
 import { colors, spacing, radius, typography } from '../../src/theme';
+import { preserveLegacyInset, TAB_CONTENT_MAX_WIDTH } from '../../src/utils/responsiveLayout';
 
 type Tab = 'global' | 'friends';
 
@@ -51,6 +54,7 @@ const av = StyleSheet.create({
 });
 
 export default function RankingScreen() {
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('global');
   const [categoryIdx, setCategoryIdx] = useState(0);
   const [rankings, setRankings] = useState<RankEntry[]>([]);
@@ -170,7 +174,8 @@ export default function RankingScreen() {
 
   return (
     <View style={s.container}>
-      <Text style={s.screenTitle}>랭킹</Text>
+      <View style={[s.contentColumn, { paddingLeft: insets.left, paddingRight: insets.right }]}>
+      <Text style={[s.screenTitle, { paddingTop: preserveLegacyInset(56, insets.top, spacing.md) }]}>랭킹</Text>
 
       {/* 탭 */}
       <View style={s.tabs}>
@@ -242,13 +247,20 @@ export default function RankingScreen() {
               </TouchableOpacity>
             ))
           )}
-          <View style={{ height: 32 }} />
+          <View style={s.listFooter} />
         </ScrollView>
       )}
+      </View>
 
       {/* 친구 검색 모달 */}
       <Modal visible={showSearch} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSearch(false)}>
-        <View style={s.modal}>
+        <KeyboardAvoidingView style={s.modal} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[s.modalContent, {
+            paddingTop: insets.top + spacing.md,
+            paddingRight: insets.right + spacing.md,
+            paddingBottom: insets.bottom + spacing.md,
+            paddingLeft: insets.left + spacing.md,
+          }]}>
           <View style={s.modalHeader}>
             <Text style={s.modalTitle}>친구 추가</Text>
             <TouchableOpacity onPress={() => { setShowSearch(false); setQuery(''); setSearchResults([]); }}>
@@ -272,14 +284,14 @@ export default function RankingScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={s.searchResults}>
+          <ScrollView style={s.searchResults} keyboardShouldPersistTaps="handled">
             {searchResults.map((u) => {
               const isFriend = friendIds.has(u.user_id);
               const isSent = sentIds.has(u.user_id);
               return (
                 <View key={u.user_id} style={s.searchRow2}>
                   <Avatar name={u.username} />
-                  <Text style={s.searchName}>{u.username}<Text style={s.rowTag}>#{u.tag}</Text></Text>
+                  <Text style={s.searchName} numberOfLines={1}>{u.username}<Text style={s.rowTag}>#{u.tag}</Text></Text>
                   <TouchableOpacity
                     style={[s.addBtn, (isFriend || isSent) && s.addBtnDone]}
                     onPress={() => addFriend(u.user_id)}
@@ -293,12 +305,19 @@ export default function RankingScreen() {
               );
             })}
           </ScrollView>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 받은 친구 요청 모달 */}
       <Modal visible={showRequests} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowRequests(false)}>
         <View style={s.modal}>
+          <View style={[s.modalContent, {
+            paddingTop: insets.top + spacing.md,
+            paddingRight: insets.right + spacing.md,
+            paddingBottom: insets.bottom + spacing.md,
+            paddingLeft: insets.left + spacing.md,
+          }]}>
           <View style={s.modalHeader}>
             <Text style={s.modalTitle}>친구 요청</Text>
             <TouchableOpacity onPress={() => setShowRequests(false)}>
@@ -306,14 +325,14 @@ export default function RankingScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView>
+          <ScrollView style={s.searchResults}>
             {pendingRequests.length === 0 ? (
               <Text style={s.empty}>받은 요청이 없어요</Text>
             ) : (
               pendingRequests.map((r) => (
                 <View key={r.id} style={s.requestRow}>
                   <Avatar name={r.username} />
-                  <Text style={s.searchName}>{r.username}<Text style={s.rowTag}>#{r.tag}</Text></Text>
+                  <Text style={s.searchName} numberOfLines={1}>{r.username}<Text style={s.rowTag}>#{r.tag}</Text></Text>
                   <TouchableOpacity style={s.acceptBtn} onPress={() => acceptRequest(r)}>
                     <Text style={s.acceptBtnText}>수락</Text>
                   </TouchableOpacity>
@@ -324,6 +343,7 @@ export default function RankingScreen() {
               ))
             )}
           </ScrollView>
+          </View>
         </View>
       </Modal>
 
@@ -337,7 +357,8 @@ export default function RankingScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  screenTitle: { ...typography.title, paddingHorizontal: spacing.md, paddingTop: 56, paddingBottom: spacing.sm },
+  contentColumn: { flex: 1, width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center' },
+  screenTitle: { ...typography.title, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
   empty: { ...typography.label, textAlign: 'center', paddingTop: 48 },
 
@@ -359,6 +380,7 @@ const s = StyleSheet.create({
   chipTextActive: { color: '#fff', fontWeight: '600' },
 
   list: { flex: 1, marginTop: spacing.sm },
+  listFooter: { height: spacing.xl },
 
   requestBanner: {
     marginHorizontal: spacing.md, marginBottom: spacing.xs,
@@ -385,37 +407,40 @@ const s = StyleSheet.create({
   },
   rowMe: { borderWidth: 1.5, borderColor: colors.primary },
   rank: { width: 28, fontSize: 15, fontWeight: '700', textAlign: 'center' },
-  rowName: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.text },
+  rowName: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: '500', color: colors.text },
   rowTag: { fontWeight: '400', color: colors.textTertiary },
-  rowValue: { fontSize: 16, fontWeight: '700', color: colors.text },
+  rowValue: { flexShrink: 0, fontSize: 16, fontWeight: '700', color: colors.text },
   rowUnit: { fontSize: 12, fontWeight: '400', color: colors.textSecondary },
 
-  modal: { flex: 1, backgroundColor: colors.background, padding: spacing.md },
+  modal: { flex: 1, backgroundColor: colors.background },
+  modalContent: { flex: 1, width: '100%', maxWidth: TAB_CONTENT_MAX_WIDTH, alignSelf: 'center' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.md },
   modalTitle: { ...typography.heading },
   modalClose: { fontSize: 15, color: colors.primary, fontWeight: '600' },
 
   searchRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   searchInput: {
-    flex: 1, height: 44, backgroundColor: colors.card,
+    flex: 1, minWidth: 0, height: 44, backgroundColor: colors.card,
     borderRadius: radius.sm, paddingHorizontal: spacing.sm,
     fontSize: 15, color: colors.text,
   },
   searchBtn: {
+    flexShrink: 0,
     backgroundColor: colors.primary, borderRadius: radius.sm,
     height: 44, paddingHorizontal: spacing.md,
     alignItems: 'center', justifyContent: 'center',
   },
   searchBtnText: { color: '#fff', fontWeight: '600' },
 
-  searchResults: { flex: 1 },
+  searchResults: { flex: 1, minHeight: 0 },
   searchRow2: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     backgroundColor: colors.card, borderRadius: radius.md,
     padding: spacing.md, marginBottom: spacing.xs,
   },
-  searchName: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.text },
+  searchName: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: '500', color: colors.text },
   addBtn: {
+    flexShrink: 0,
     backgroundColor: colors.primary, borderRadius: radius.sm,
     paddingHorizontal: 14, paddingVertical: 7,
   },
@@ -428,11 +453,13 @@ const s = StyleSheet.create({
     padding: spacing.md, marginBottom: spacing.xs,
   },
   acceptBtn: {
+    flexShrink: 0,
     backgroundColor: colors.primary, borderRadius: radius.sm,
     paddingHorizontal: 14, paddingVertical: 7,
   },
   acceptBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   rejectBtn: {
+    flexShrink: 0,
     backgroundColor: colors.card, borderRadius: radius.sm,
     paddingHorizontal: 14, paddingVertical: 7,
     borderWidth: 1, borderColor: colors.divider,

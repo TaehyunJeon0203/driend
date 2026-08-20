@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 
 export default function OnboardingTip({
@@ -10,7 +11,11 @@ export default function OnboardingTip({
   storageKey: string;
   message: string;
 }) {
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [visible, setVisible] = useState(false);
+  const bubbleWidth = Math.max(0, Math.min(windowWidth - 48, 560));
+  const bubbleTop = Math.max(60, insets.top + 16);
 
   useEffect(() => {
     AsyncStorage.getItem(storageKey).then((seen) => {
@@ -27,7 +32,7 @@ export default function OnboardingTip({
 
   return (
     <View style={s.overlay} pointerEvents="box-none">
-      <View style={s.bubble}>
+      <View style={[s.bubble, { top: bubbleTop, width: bubbleWidth }]}>
         <Text style={s.text}>{message}</Text>
         <TouchableOpacity style={s.btn} onPress={dismiss}>
           <Text style={s.btnText}>확인</Text>
@@ -38,10 +43,9 @@ export default function OnboardingTip({
 }
 
 const s = StyleSheet.create({
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center' },
   bubble: {
     position: 'absolute',
-    top: 60, left: 24, right: 24,
     backgroundColor: '#191919',
     borderRadius: 16,
     padding: 20,

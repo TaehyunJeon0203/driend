@@ -123,6 +123,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="drive-result/[id]" />
         <Stack.Screen name="user/[id]" />
       </Stack>
       <StatusBar style="auto" />

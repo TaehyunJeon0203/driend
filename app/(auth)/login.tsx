@@ -6,14 +6,21 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { login } from '@react-native-kakao/user';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../src/services/supabase';
-import { colors } from '../../src/theme';
+import { colors, spacing } from '../../src/theme';
+import {
+  AUTH_CONTENT_MAX_WIDTH,
+  preserveLegacyInset,
+} from '../../src/utils/responsiveLayout';
 
 export default function LoginScreen() {
+  const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(false);
   const [isKakaoLoading, setIsKakaoLoading] = useState(false);
   const [isAppleLoading, setIsAppleLoading] = useState(false);
@@ -96,56 +103,80 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.top}>
-        <Text style={styles.logo}>Driend</Text>
-        <Text style={styles.subtitle}>드라이브를 기록하고{'\n'}친구와 함께 달려요</Text>
-      </View>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: preserveLegacyInset(0, insets.top, spacing.md),
+            paddingHorizontal: preserveLegacyInset(
+              spacing.xl,
+              Math.max(insets.left, insets.right),
+              spacing.md,
+            ),
+            paddingBottom: preserveLegacyInset(48, insets.bottom, spacing.md),
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.top}>
+          <Text style={styles.logo}>Driend</Text>
+          <Text style={styles.subtitle}>드라이브를 기록하고{'\n'}친구와 함께 달려요</Text>
+        </View>
 
-      <View style={styles.bottom}>
-        {appleAvailable && (
-          <AppleAuthentication.AppleAuthenticationButton
-            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-            cornerRadius={14}
-            style={[styles.appleButton, isAppleLoading && styles.disabled]}
-            onPress={handleAppleLogin}
-          />
-        )}
-
-        <TouchableOpacity
-          style={[styles.kakaoButton, isKakaoLoading && styles.disabled]}
-          onPress={handleKakaoLogin}
-          disabled={isKakaoLoading}
-        >
-          {isKakaoLoading ? (
-            <ActivityIndicator color="#3C1E1E" />
-          ) : (
-            <Text style={styles.kakaoText}>카카오로 시작하기</Text>
+        <View style={styles.bottom}>
+          {appleAvailable && (
+            <AppleAuthentication.AppleAuthenticationButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              cornerRadius={14}
+              style={[styles.appleButton, isAppleLoading && styles.disabled]}
+              onPress={handleAppleLogin}
+            />
           )}
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.guestButton, isLoading && styles.disabled]}
-          onPress={handleAnonymousLogin}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.guestText}>게스트로 시작하기</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.kakaoButton, isKakaoLoading && styles.disabled]}
+            onPress={handleKakaoLogin}
+            disabled={isKakaoLoading}
+          >
+            {isKakaoLoading ? (
+              <ActivityIndicator color="#3C1E1E" />
+            ) : (
+              <Text style={styles.kakaoText}>카카오로 시작하기</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.guestButton, isLoading && styles.disabled]}
+            onPress={handleAnonymousLogin}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.guestText}>게스트로 시작하기</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  scrollView: { flex: 1 },
+  content: { flexGrow: 1 },
   top: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   logo: { fontSize: 52, fontWeight: 'bold', color: colors.primary },
   subtitle: { fontSize: 17, color: '#888', textAlign: 'center', lineHeight: 26 },
-  bottom: { padding: 32, paddingBottom: 48, gap: 12 },
+  bottom: {
+    width: '100%',
+    maxWidth: AUTH_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    gap: 12,
+  },
   appleButton: {
     height: 54,
   },
