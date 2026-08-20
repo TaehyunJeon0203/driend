@@ -1,3 +1,5 @@
+import { shouldSplitRoute } from './routeTrackingUtils';
+
 export type DriveResultPoint = {
   latitude: number;
   longitude: number;
@@ -88,15 +90,24 @@ export type SpeedRouteSegment = { color: string; path: string };
 export function createSpeedRouteSegments(points: ProjectedPoint[], bands: SpeedBand[]): SpeedRouteSegment[] {
   if (points.length < 2) return [];
   const output: SpeedRouteSegment[] = [];
-  let color = colorForSpeed(points[1].speedKmh, bands);
-  let path = `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  let color: string | null = null;
+  let path: string | null = null;
 
-  for (let index = 2; index < points.length; index++) {
+  for (let index = 1; index < points.length; index++) {
     const point = points[index];
+    const previous = points[index - 1];
+    if (shouldSplitRoute(previous, point)) {
+      if (color && path) output.push({ color, path });
+      color = null;
+      path = null;
+      continue;
+    }
     const nextColor = colorForSpeed(point.speedKmh, bands);
-    if (nextColor !== color) {
+    if (!path || color == null) {
+      color = nextColor;
+      path = `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
+    } else if (nextColor !== color) {
       output.push({ color, path });
-      const previous = points[index - 1];
       color = nextColor;
       path = `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
     } else {
@@ -104,7 +115,7 @@ export function createSpeedRouteSegments(points: ProjectedPoint[], bands: SpeedB
     }
   }
 
-  output.push({ color, path });
+  if (color && path) output.push({ color, path });
   return output;
 }
 

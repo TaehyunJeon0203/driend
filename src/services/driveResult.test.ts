@@ -5,8 +5,8 @@ import {
   type DriveResultPoint,
 } from './driveResultUtils';
 
-const point = (latitude: number, longitude: number, speedKmh: number | null): DriveResultPoint => ({
-  latitude, longitude, speedKmh, recordedAt: '2026-08-20T00:00:00Z',
+const point = (latitude: number, longitude: number, speedKmh: number | null, recordedAt = '2026-08-20T00:00:00Z'): DriveResultPoint => ({
+  latitude, longitude, speedKmh, recordedAt,
 });
 
 describe('drive result helpers', () => {
@@ -27,7 +27,11 @@ describe('drive result helpers', () => {
   });
 
   it('colors a final route segment using the final recorded speed', () => {
-    const points = [point(37, 127, 10), point(37.1, 127.1, 10), point(37.2, 127.2, 60)];
+    const points = [
+      point(37, 127, 10, '2026-08-20T00:00:00Z'),
+      point(37.0001, 127.0001, 10, '2026-08-20T00:00:02Z'),
+      point(37.0002, 127.0002, 60, '2026-08-20T00:00:04Z'),
+    ];
     const bands = createSpeedBands(points);
     const segments = createSpeedRouteSegments(points.map((routePoint, index) => ({
       ...routePoint,
@@ -38,6 +42,20 @@ describe('drive result helpers', () => {
     expect(segments).toHaveLength(2);
     expect(segments[0].color).toBe(SPEED_BAND_COLORS[0]);
     expect(segments[1]).toEqual({ color: SPEED_BAND_COLORS[4], path: 'M 10 5 L 20 10' });
+  });
+
+  it('does not draw a speed segment across a meaningful timestamp gap', () => {
+    const points = [
+      point(37, 127, 10, '2026-08-20T00:00:00Z'),
+      point(37.0001, 127, 10, '2026-08-20T00:00:02Z'),
+      point(37.1, 127, 10, '2026-08-20T00:02:00Z'),
+      point(37.1001, 127, 10, '2026-08-20T00:02:02Z'),
+    ].map((routePoint, index) => ({ ...routePoint, x: index * 10, y: index * 5 }));
+
+    expect(createSpeedRouteSegments(points, createSpeedBands(points))).toEqual([
+      { color: SPEED_BAND_COLORS[2], path: 'M 0 0 L 10 5' },
+      { color: SPEED_BAND_COLORS[2], path: 'M 20 10 L 30 15' },
+    ]);
   });
 
   it('calculates average speed from persisted distance and duration', () => {

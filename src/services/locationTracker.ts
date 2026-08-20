@@ -2,10 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 import { supabase } from './supabase';
 import { processMatchAsync } from './mapMatcher';
 import { buildCityIndex, matchVisitedCities } from './geo';
 import { createStopCoordinator } from './stopCoordinator';
+import { toPersistedSpeedKmh, validateLocationSample, type LocationSample } from './routeTrackingUtils';
 import CITY_DATA from '../../assets/korea-cities.json';
 
 type City = { code: string; name: string; province_code: string; center: Coordinate; polygons: Coordinate[][] };
@@ -15,9 +17,23 @@ const CITY_INDEX = buildCityIndex(CITIES);
 const LOCATION_TASK = 'driend-location-task';
 const MONITOR_TASK = 'driend-monitor-task';
 const FLUSH_THRESHOLD = 10;
+const ACTIVE_DRIVE_STORAGE_KEY = 'location_tracker_active_drive';
 
 export type Coordinate = { longitude: number; latitude: number };
-type TrackedPoint = Coordinate & { speedKmh: number; recordedAt: string };
+type TrackedPoint = Coordinate & { speedKmh: number | null; recordedAt: string };
+type PersistedDriveState = {
+  driveId: string;
+  runningDistanceKm: number;
+  lastAcceptedSample: LocationSample | null;
+  firstCoord: Coordinate | null;
+  midCoord: Coordinate | null;
+  coordCount: number;
+  lastMovingTimestamp: number | null;
+  lastLocationReceivedAt: number | null;
+  maxSpeedMs: number;
+  pendingPoints: TrackedPoint[];
+  driveCoords: Coordinate[];
+};
 
 export const DRIVE_IDLE_CATEGORY = 'DRIVE_IDLE';
 export const DRIVE_DETECT_CATEGORY = 'DRIVE_DETECT';
@@ -37,6 +53,7 @@ let flushPromise: Promise<void> | null = null;
 
 let runningDistanceKm = 0;
 let prevCoord: Coordinate | null = null;
+let lastAcceptedSample: LocationSample | null = null;
 let firstCoord: Coordinate | null = null;
 let midCoord: Coordinate | null = null;
 let coordCount = 0;
@@ -58,10 +75,10 @@ export function setActiveTripId(id: string | null): void {
   activeTripId = id;
 }
 
-const pointListeners = new Set<(coord: Coordinate, distanceKm: number) => void>();
+const pointListeners = new Set<(coord: Coordinate, distanceKm: number, recordedAt: string) => void>();
 const stopListeners = new Set<(stoppedDriveId: string) => void>();
 
-export function addPointListener(cb: (coord: Coordinate, distanceKm: number) => void): () => void {
+export function addPointListener(cb: (coord: Coordinate, distanceKm: number, recordedAt: string) => void): () => void {
   pointListeners.add(cb);
   return () => pointListeners.delete(cb);
 }
@@ -109,33 +126,16 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
     return;
   }
   if (!data?.locations?.length) return;
+  await restoreTrackingState();
+  if (!driveId) return;
 
   const now = Date.now();
   lastLocationReceivedAt = now;
   for (const loc of data.locations) {
-    const coord: Coordinate = {
-      longitude: loc.coords.longitude,
-      latitude: loc.coords.latitude,
-    };
-
-    coordCount++;
-    if (!firstCoord) firstCoord = coord;
-    if (prevCoord) runningDistanceKm += haversineKm(prevCoord, coord);
-    prevCoord = coord;
-    if (coordCount % 30 === 0) midCoord = coord;
-
-    const speed = loc.coords.speed ?? -1;
-    buffer.push({
-      ...coord,
-      speedKmh: Math.max(0, speed) * 3.6,
-      recordedAt: new Date(loc.timestamp).toISOString(),
-    });
-    driveCoords.push(coord);
-    pointListeners.forEach((cb) => cb(coord, runningDistanceKm));
-
-    if (speed > maxSpeedMs) maxSpeedMs = speed;
-
-    if (speed >= 0) {
+    const speed = loc.coords.speed;
+    // Idle detection still consumes reported motion state even when a coordinate is filtered out;
+    // rejected jitter must not prevent stationary auto-stop from firing.
+    if (speed != null && speed >= 0) {
       if (speed > IDLE_SPEED_THRESHOLD) {
         lastMovingTimestamp = now;
         if (idleNotificationSent) {
@@ -160,9 +160,40 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: TaskManager.TaskMa
         }
       }
     }
+
+    const sample: LocationSample = {
+      longitude: loc.coords.longitude,
+      latitude: loc.coords.latitude,
+      timestamp: loc.timestamp,
+      accuracy: loc.coords.accuracy,
+      speed: loc.coords.speed,
+    };
+    const validation = validateLocationSample(sample, lastAcceptedSample);
+    if (!validation.accepted) continue;
+    const coord: Coordinate = { longitude: sample.longitude, latitude: sample.latitude };
+
+    coordCount++;
+    if (!firstCoord) firstCoord = coord;
+    runningDistanceKm += validation.distanceKm;
+    prevCoord = coord;
+    lastAcceptedSample = sample;
+    if (coordCount % 30 === 0) midCoord = coord;
+
+    const recordedAt = new Date(loc.timestamp).toISOString();
+    buffer.push({
+      ...coord,
+      speedKmh: speed == null || speed < 0 ? null : speed * 3.6,
+      recordedAt,
+    });
+    driveCoords.push(coord);
+    pointListeners.forEach((cb) => cb(coord, runningDistanceKm, recordedAt));
+
+    if (speed != null && speed > maxSpeedMs) maxSpeedMs = speed;
+
   }
 
   if (buffer.length >= FLUSH_THRESHOLD) await flushBuffer();
+  await persistTrackingState();
 });
 
 const REGION_TO_KO: Record<string, string> = {
@@ -185,17 +216,6 @@ const REGION_TO_KO: Record<string, string> = {
   'Jeju-do': '제주특별자치도',
 };
 
-function haversineKm(a: Coordinate, b: Coordinate): number {
-  const R = 6371;
-  const dLat = (b.latitude - a.latitude) * (Math.PI / 180);
-  const dLon = (b.longitude - a.longitude) * (Math.PI / 180);
-  const s = Math.sin(dLat / 2) ** 2 +
-    Math.cos(a.latitude * Math.PI / 180) *
-    Math.cos(b.latitude * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-}
-
 async function recordVisitedCities(userId: string, coords: Coordinate[]) {
   const matched = matchVisitedCities(coords, CITY_INDEX);
   if (!matched.size) return;
@@ -212,6 +232,7 @@ async function recordVisitedCities(userId: string, coords: Coordinate[]) {
 function resetDriveState() {
   runningDistanceKm = 0;
   prevCoord = null;
+  lastAcceptedSample = null;
   firstCoord = null;
   midCoord = null;
   coordCount = 0;
@@ -223,11 +244,71 @@ function resetDriveState() {
   maxSpeedMs = 0;
 }
 
+let restorePromise: Promise<void> | null = null;
+
+async function restoreTrackingState(): Promise<void> {
+  if (driveId) return;
+  if (!restorePromise) {
+    restorePromise = (async () => {
+      const raw = await AsyncStorage.getItem(ACTIVE_DRIVE_STORAGE_KEY);
+      if (!raw || driveId) return;
+      try {
+        const state = JSON.parse(raw) as Partial<PersistedDriveState>;
+        if (typeof state.driveId !== 'string') return;
+        driveId = state.driveId;
+        runningDistanceKm = Number.isFinite(state.runningDistanceKm) ? state.runningDistanceKm! : 0;
+        lastAcceptedSample = state.lastAcceptedSample ?? null;
+        prevCoord = lastAcceptedSample
+          ? { latitude: lastAcceptedSample.latitude, longitude: lastAcceptedSample.longitude }
+          : null;
+        firstCoord = state.firstCoord ?? prevCoord;
+        midCoord = state.midCoord ?? null;
+        coordCount = Number.isFinite(state.coordCount) ? state.coordCount! : 0;
+        lastMovingTimestamp = state.lastMovingTimestamp ?? null;
+        lastLocationReceivedAt = state.lastLocationReceivedAt ?? null;
+        maxSpeedMs = Number.isFinite(state.maxSpeedMs) ? state.maxSpeedMs! : 0;
+        if (Array.isArray(state.pendingPoints)) buffer.push(...state.pendingPoints);
+        if (Array.isArray(state.driveCoords)) {
+          driveCoords.push(...state.driveCoords.filter((coord): coord is Coordinate =>
+            Number.isFinite(coord?.latitude) && Number.isFinite(coord?.longitude)));
+        }
+      } catch {
+        // Ignore malformed state; it cannot safely identify an active drive.
+      }
+    })().finally(() => { restorePromise = null; });
+  }
+  await restorePromise;
+}
+
+async function persistTrackingState(): Promise<void> {
+  if (!driveId) return;
+  const state: PersistedDriveState = {
+    driveId,
+    runningDistanceKm,
+    lastAcceptedSample,
+    firstCoord,
+    midCoord,
+    coordCount,
+    lastMovingTimestamp,
+    lastLocationReceivedAt,
+    maxSpeedMs,
+    pendingPoints: buffer.slice(),
+    driveCoords: driveCoords.slice(),
+  };
+  await AsyncStorage.setItem(ACTIVE_DRIVE_STORAGE_KEY, JSON.stringify(state));
+}
+
+export async function initializeLocationTracker(): Promise<void> {
+  await restoreTrackingState();
+}
+
 export function isTracking(): boolean {
   return driveId !== null;
 }
 
 export async function startMonitoring(): Promise<void> {
+  await restoreTrackingState();
+  if (isTracking()) return;
   const { status } = await Location.getBackgroundPermissionsAsync();
   if (status !== 'granted') return;
 
@@ -243,6 +324,7 @@ export async function startMonitoring(): Promise<void> {
 }
 
 export async function cleanupOrphanedDrives(): Promise<void> {
+  await restoreTrackingState();
   if (isTracking()) return;
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user) return;
@@ -255,6 +337,7 @@ export async function cleanupOrphanedDrives(): Promise<void> {
 // 정차 알림/자동종료 로직이 실행될 기회가 없음. 앱이 포그라운드로 돌아올 때마다
 // 마지막으로 위치를 받은 실제 시각(wall clock) 기준으로 따로 확인해 이 사각지대를 보완.
 export async function checkStaleTrackingOnForeground(): Promise<void> {
+  await restoreTrackingState();
   if (!isTracking() || lastLocationReceivedAt == null) return;
   const elapsed = Date.now() - lastLocationReceivedAt;
   if (elapsed >= AUTO_STOP_MS) {
@@ -263,6 +346,8 @@ export async function checkStaleTrackingOnForeground(): Promise<void> {
 }
 
 export async function startTracking(): Promise<boolean> {
+  await restoreTrackingState();
+  if (isTracking()) return true;
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
   if (fgStatus !== 'granted') return false;
 
@@ -293,6 +378,7 @@ export async function startTracking(): Promise<boolean> {
   driveId = drive.id;
   resetDriveState();
   lastLocationReceivedAt = Date.now();
+  await persistTrackingState();
 
   // MONITOR_TASK 중지 (주행 중엔 감지 불필요)
   const monitorRunning = await Location.hasStartedLocationUpdatesAsync(MONITOR_TASK);
@@ -307,11 +393,20 @@ export async function startTracking(): Promise<boolean> {
 }
 
 async function startDriveLocationUpdates(): Promise<void> {
+  if (Platform.OS === 'android') {
+    try {
+      await Location.enableNetworkProviderAsync();
+    } catch {
+      // High-accuracy mode may already be enabled or the user may decline the settings dialog.
+    }
+  }
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
     distanceInterval: 5,
     timeInterval: 2000,
     showsBackgroundLocationIndicator: true,
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    pausesUpdatesAutomatically: false,
     foregroundService: {
       notificationTitle: 'Driend 주행 중',
       notificationBody: '주행 경로를 기록하고 있습니다.',
@@ -335,6 +430,7 @@ async function performStopTracking(stoppingDriveId: string | null): Promise<stri
   Notifications.dismissAllNotificationsAsync();
   try {
     await flushBuffer(stoppingDriveId);
+    await persistTrackingState();
   } catch (error) {
     if (driveId === stoppingDriveId) await startDriveLocationUpdates();
     throw error;
@@ -356,7 +452,7 @@ async function performStopTracking(stoppingDriveId: string | null): Promise<stri
     }
   } catch {}
 
-  await supabase
+  const { error: updateError } = await supabase
     .from('drives')
     .update({
       ended_at: new Date().toISOString(),
@@ -366,12 +462,17 @@ async function performStopTracking(stoppingDriveId: string | null): Promise<stri
       end_address: endAddress,
     })
     .eq('id', stoppingDriveId);
+  if (updateError) {
+    if (driveId === stoppingDriveId) await startDriveLocationUpdates();
+    throw updateError;
+  }
 
   if (user && sampleCoords.length > 0) {
     recordVisitedCities(user.id, sampleCoords);
   }
 
   if (driveId === stoppingDriveId) {
+    await AsyncStorage.removeItem(ACTIVE_DRIVE_STORAGE_KEY);
     driveId = null;
     resetDriveState();
     stopListeners.forEach((cb) => cb(stoppingDriveId));
@@ -398,7 +499,7 @@ async function flushBuffer(expectedDriveId: string | null = driveId): Promise<vo
       const rows = points.map((p) => ({
         drive_id: expectedDriveId,
         location: `POINT(${p.longitude} ${p.latitude})`,
-        speed_kmh: p.speedKmh,
+        speed_kmh: toPersistedSpeedKmh(p.speedKmh),
         recorded_at: p.recordedAt,
       }));
       const { error } = await supabase.from('route_points').insert(rows);

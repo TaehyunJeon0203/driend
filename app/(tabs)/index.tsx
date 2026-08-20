@@ -32,12 +32,14 @@ import {
 } from '../../src/services/driveResult';
 import CityPhotoGallery from '../../src/components/CityPhotoGallery';
 import { colors } from '../../src/theme';
+import { splitRouteSegments } from '../../src/services/routeTrackingUtils';
 import CITY_DATA from '../../assets/korea-cities.json';
 import CITY_DATA_SIMPLIFIED from '../../assets/korea-cities-simplified.json';
 
 type MapMode = 'drive' | 'photo';
-type RouteLine = { drive_id: string; coordinates: [number, number][] };
-type LatLng = { latitude: number; longitude: number };
+type RouteCoordinate = [longitude: number, latitude: number, recordedAt?: string];
+type RouteLine = { drive_id: string; coordinates: RouteCoordinate[] };
+type LatLng = { latitude: number; longitude: number; recordedAt?: string };
 type VisitedCity = { id: string; city_code: string; city_name: string; photo_url: string | null };
 type City = { code: string; name: string; province_code: string; center: LatLng; polygons: LatLng[][] };
 
@@ -217,8 +219,8 @@ export default function MapScreen() {
       isFirstPoint.current = false;
     }
 
-    const removePoint = addPointListener((coord, distanceKm) => {
-      const latLng = { latitude: coord.latitude, longitude: coord.longitude };
+    const removePoint = addPointListener((coord, distanceKm, recordedAt) => {
+      const latLng = { latitude: coord.latitude, longitude: coord.longitude, recordedAt };
       routeCoordsBufferRef.current.push(latLng);
       setCurrentPosition(latLng);
       setDriveDistanceKm(distanceKm);
@@ -314,29 +316,36 @@ export default function MapScreen() {
     const segments: Array<{ coords: LatLng[]; color: string; width: number }> = [];
 
     for (const line of pastLines) {
-      if (!line.coordinates || line.coordinates.length < 2) continue;
-      let segCoords: LatLng[] = [{ latitude: line.coordinates[0][1], longitude: line.coordinates[0][0] }];
-      let segFreq = getFreq(line.coordinates[0][0], line.coordinates[0][1]);
+      const continuousLines = splitRouteSegments((line.coordinates ?? []).map(([longitude, latitude, recordedAt]) => ({
+        latitude,
+        longitude,
+        recordedAt,
+      })));
+      for (const continuousLine of continuousLines) {
+        let segCoords: LatLng[] = [continuousLine[0]];
+        let segFreq = getFreq(continuousLine[0].longitude, continuousLine[0].latitude);
 
-      for (let i = 1; i < line.coordinates.length; i++) {
-        const [lng, lat] = line.coordinates[i];
-        const freq = getFreq(lng, lat);
-        const pt = { latitude: lat, longitude: lng };
-        if (freq !== segFreq) {
+        for (let i = 1; i < continuousLine.length; i++) {
+          const pt = continuousLine[i];
+          const freq = getFreq(pt.longitude, pt.latitude);
+          if (freq !== segFreq) {
+            segCoords.push(pt);
+            if (segCoords.length >= 2) segments.push({ coords: segCoords, ...freqStyle(segFreq) });
+            segCoords = [segCoords[segCoords.length - 1]];
+            segFreq = freq;
+          }
           segCoords.push(pt);
-          if (segCoords.length >= 2) segments.push({ coords: segCoords, ...freqStyle(segFreq) });
-          segCoords = [segCoords[segCoords.length - 1]];
-          segFreq = freq;
         }
-        segCoords.push(pt);
+        if (segCoords.length >= 2) segments.push({ coords: segCoords, ...freqStyle(segFreq) });
       }
-      if (segCoords.length >= 2) segments.push({ coords: segCoords, ...freqStyle(segFreq) });
     }
 
     // 저빈도 → 고빈도 순 정렬 (고빈도가 위에 그려짐)
     segments.sort((a, b) => a.width - b.width);
     return segments;
   }, [pastLines]);
+
+  const liveRouteSegments = useMemo(() => splitRouteSegments(routeCoords), [routeCoords]);
 
   const withCityMeta = useCallback((cities: City[]) => {
     const cityMap = new Map(visitedCities.map((c) => [c.city_code, c]));
@@ -716,16 +725,17 @@ export default function MapScreen() {
                 width={seg.width * routeWidthScale(driveZoom)}
               />
             ))}
-            {routeCoords.length >= 2 && (
+            {liveRouteSegments.map((segment, index) => (
               // 현재 주행 중인 경로는 과거 기록(보라 계열)과 구분되도록 선명한 핑크로 강조
               <NaverMapPathOverlay
-                coords={routeCoords}
+                key={`live-route-${index}`}
+                coords={segment}
                 color="#FF2D78"
                 outlineColor="rgba(255,255,255,0.9)"
                 outlineWidth={2.5 * routeWidthScale(driveZoom)}
                 width={7 * routeWidthScale(driveZoom)}
               />
-            )}
+            ))}
           </>
         )}
 

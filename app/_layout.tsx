@@ -11,7 +11,7 @@ import { generateRandomTag } from '../src/services/profileTag';
 import {
   startTracking, stopTracking, isTracking,
   cleanupOrphanedDrives, resetIdleTimer, startMonitoring,
-  checkStaleTrackingOnForeground,
+  checkStaleTrackingOnForeground, initializeLocationTracker,
   DRIVE_IDLE_CATEGORY, DRIVE_DETECT_CATEGORY, setActiveTripId,
 } from '../src/services/locationTracker';
 
@@ -92,23 +92,45 @@ export default function RootLayout() {
       }
     });
 
+    // All startup decisions must observe restored local tracking state. This only reads
+    // AsyncStorage; Supabase work remains deferred outside auth callbacks below.
+    const trackerReady = initializeLocationTracker().then(
+      () => true,
+      (error) => {
+        console.error('[Tracker] state restore failed:', error);
+        return false;
+      },
+    );
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       // supabase-js: onAuthStateChange/getSession 콜백 안에서 바로 다른 supabase 호출을 await하면
       // 내부 세션 락이 걸려 이후 모든 supabase 호출이 멈추는 문제가 있음 → setTimeout으로 한 틱 미룸
-      setTimeout(() => {
-        if (session) cleanupOrphanedDrives();
+      setTimeout(async () => {
+        const trackerRestored = await trackerReady;
+        if (session && trackerRestored) cleanupOrphanedDrives();
         handleAuthSession(session);
       }, 0);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setTimeout(() => handleAuthSession(session), 0);
+      setTimeout(async () => {
+        await trackerReady;
+        handleAuthSession(session);
+      }, 0);
     });
 
     // GPS 신호 유실(지하주차장 등)로 정차 감지가 멈춘 주행을 포그라운드 복귀 시마다 확인
-    checkStaleTrackingOnForeground();
+    const checkStaleAfterRestore = () => {
+      trackerReady.then((trackerRestored) => {
+        if (!trackerRestored) return;
+        checkStaleTrackingOnForeground().catch((error) => {
+          console.error('[Tracker] stale tracking check failed:', error);
+        });
+      });
+    };
+    checkStaleAfterRestore();
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkStaleTrackingOnForeground();
+      if (state === 'active') checkStaleAfterRestore();
     });
 
     return () => {
